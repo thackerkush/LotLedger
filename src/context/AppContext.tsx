@@ -1,0 +1,285 @@
+import React, { createContext, useContext, useReducer, useEffect } from 'react';
+import type { AppState, Action, Lot } from '../types';
+import { loadState, saveState, defaultState, getProfileKey } from '../utils/storage';
+
+const AppContext = createContext<{
+  state: AppState;
+  dispatch: React.Dispatch<Action>;
+}>({
+  state: defaultState,
+  dispatch: () => null,
+});
+
+const applyCorporateActionLogic = (state: AppState, actionId: string): AppState => {
+  const ca = state.corporateActions.find((a) => a.id === actionId);
+  if (!ca || ca.applied) return state;
+
+  const updatedLots: Lot[] = [];
+  const newLots: Lot[] = [];
+
+  state.lots.forEach((lot) => {
+    if (lot.script === ca.script && lot.remainingQty > 0 && lot.buyDate <= ca.date) {
+      if (ca.type === 'SPLIT') {
+        const [nStr, dStr] = (ca.ratio || '1:1').split(':');
+        const n = parseFloat(nStr) || 1;
+        const d = parseFloat(dStr) || 1;
+        const ratio = n / d;
+        
+        updatedLots.push({
+          ...lot,
+          remainingQty: lot.remainingQty * ratio,
+          originalQty: lot.originalQty * ratio,
+          buyPrice: lot.buyPrice / ratio,
+        });
+      } else if (ca.type === 'BONUS') {
+        const [nStr, dStr] = (ca.ratio || '1:1').split(':');
+        const n = parseFloat(nStr) || 0;
+        const d = parseFloat(dStr) || 1;
+        const ratio = n / d;
+        
+        const bonusShares = lot.remainingQty * ratio;
+        const newOriginalQty = lot.originalQty + (lot.originalQty * ratio);
+        updatedLots.push({
+          ...lot,
+          remainingQty: lot.remainingQty + bonusShares,
+          originalQty: newOriginalQty,
+          buyPrice: lot.totalCost / newOriginalQty,
+        });
+      } else if (ca.type === 'MERGER') {
+        // Adjust parent cost basis
+        const parentPercent = (ca.parentCostPercent ?? 100) / 100;
+        const childPercent = (ca.childCostPercent ?? 0) / 100;
+        const [nStr, dStr] = (ca.ratio || '1:1').split(':');
+        const ratioMultiplier = (parseFloat(nStr) || 1) / (parseFloat(dStr) || 1);
+
+        updatedLots.push({
+          ...lot,
+          buyPrice: lot.buyPrice * parentPercent,
+          totalCost: lot.totalCost * parentPercent,
+        });
+
+        // Spawn child lot
+        if (ca.childSymbol && ca.childCostPercent !== undefined) {
+          newLots.push({
+            ...lot,
+            id: `LOT_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+            script: ca.childSymbol,
+            buyPrice: (lot.buyPrice * childPercent) / ratioMultiplier,
+            originalQty: lot.originalQty * ratioMultiplier,
+            remainingQty: lot.remainingQty * ratioMultiplier,
+            totalCost: lot.totalCost * childPercent,
+            notes: `Spun off from ${ca.parentSymbol || ca.script} via Merger/De-merger`,
+          });
+        }
+      } else {
+        updatedLots.push(lot);
+      }
+    } else {
+      updatedLots.push(lot);
+    }
+  });
+
+  return {
+    ...state,
+    lots: [...updatedLots, ...newLots],
+    corporateActions: state.corporateActions.map((a) =>
+      a.id === actionId ? { ...a, applied: true } : a
+    ),
+  };
+};
+
+const appReducer = (state: AppState, action: Action): AppState => {
+  switch (action.type) {
+    case 'SET_STATE':
+      return { ...action.payload };
+
+    case 'ADD_TRANSACTION':
+      return { ...state, transactions: [...state.transactions, action.payload] };
+    case 'UPDATE_TRANSACTION':
+      return {
+        ...state,
+        transactions: state.transactions.map((t) =>
+          t.id === action.payload.id ? action.payload : t
+        ),
+      };
+    case 'DELETE_TRANSACTION':
+      return {
+        ...state,
+        transactions: state.transactions.filter((t) => t.id !== action.payload),
+      };
+
+    case 'ADD_LOT':
+      return { ...state, lots: [...state.lots, action.payload] };
+    case 'UPDATE_LOT':
+      return {
+        ...state,
+        lots: state.lots.map((l) => (l.id === action.payload.id ? action.payload : l)),
+      };
+    case 'REMOVE_LOT':
+      return { ...state, lots: state.lots.filter((l) => l.id !== action.payload) };
+
+    case 'ADD_CLOSED_TRADE':
+      return { ...state, closedTrades: [...state.closedTrades, action.payload] };
+    case 'DELETE_CLOSED_TRADE':
+      return {
+        ...state,
+        closedTrades: state.closedTrades.filter((ct) => ct.id !== action.payload),
+      };
+
+    case 'ADD_DIVIDEND':
+      return { ...state, dividends: [...state.dividends, action.payload] };
+    case 'UPDATE_DIVIDEND':
+      return {
+        ...state,
+        dividends: state.dividends.map((d) => (d.id === action.payload.id ? action.payload : d)),
+      };
+    case 'DELETE_DIVIDEND':
+      return {
+        ...state,
+        dividends: state.dividends.filter((d) => d.id !== action.payload),
+      };
+
+    case 'ADD_CORPORATE_ACTION':
+      return { ...state, corporateActions: [...state.corporateActions, action.payload] };
+    case 'DELETE_CORPORATE_ACTION':
+      return {
+        ...state,
+        corporateActions: state.corporateActions.filter((ca) => ca.id !== action.payload),
+      };
+    case 'APPLY_CORPORATE_ACTION':
+      return applyCorporateActionLogic(state, action.payload.actionId);
+
+    case 'UPDATE_SETTINGS':
+      return { ...state, settings: { ...state.settings, ...action.payload } };
+
+    case 'SET_STOCK_MASTER':
+      return { ...state, stockMaster: action.payload };
+
+    case 'ADD_WATCHLIST':
+      return { ...state, watchlist: [...state.watchlist, action.payload] };
+    case 'REMOVE_WATCHLIST':
+      return {
+        ...state,
+        watchlist: state.watchlist.filter((w) => w.id !== action.payload),
+      };
+
+    case 'SWITCH_PROFILE':
+      // The context provider wraps this dispatch to load state from localStorage
+      return { ...state, activeProfile: action.payload };
+
+    case 'ADD_PROFILE': {
+      const newName = action.payload;
+      if (state.profiles.includes(newName)) return state;
+      const newProfiles = [...state.profiles, newName];
+      return { ...state, profiles: newProfiles };
+    }
+
+    case 'RENAME_PROFILE': {
+      const { oldName, newName } = action.payload;
+      if (state.profiles.includes(newName)) return state;
+
+      // 1. Copy localStorage
+      const oldData = localStorage.getItem(getProfileKey(oldName));
+      if (oldData) {
+        localStorage.setItem(getProfileKey(newName), oldData);
+      }
+      // 2. Delete old key
+      localStorage.removeItem(getProfileKey(oldName));
+
+      // 3 & 4. Update state profiles array and activeProfile
+      const newProfiles = state.profiles.map((p) => (p === oldName ? newName : p));
+      const newActiveProfile = state.activeProfile === oldName ? newName : state.activeProfile;
+
+      // 5. Update settings portfolios and rename inside lots/transactions
+      const newPortfolios = state.settings.portfolios.map((p) => (p === oldName ? newName : p));
+      
+      const newTransactions = state.transactions.map((t) => 
+        t.portfolio === oldName ? { ...t, portfolio: newName } : t
+      );
+      const newLots = state.lots.map((l) => 
+        l.portfolio === oldName ? { ...l, portfolio: newName } : l
+      );
+      const newClosedTrades = state.closedTrades.map((ct) => 
+        ct.portfolio === oldName ? { ...ct, portfolio: newName } : ct
+      );
+
+      return {
+        ...state,
+        profiles: newProfiles,
+        activeProfile: newActiveProfile,
+        settings: { ...state.settings, portfolios: newPortfolios },
+        transactions: newTransactions,
+        lots: newLots,
+        closedTrades: newClosedTrades,
+      };
+    }
+
+    case 'DELETE_PROFILE': {
+      if (action.payload === 'Default') return state;
+      localStorage.removeItem(getProfileKey(action.payload));
+      const newProfiles = state.profiles.filter((p) => p !== action.payload);
+      const newActiveProfile = state.activeProfile === action.payload ? 'Default' : state.activeProfile;
+      return { ...state, profiles: newProfiles, activeProfile: newActiveProfile };
+    }
+
+    case 'SET_PROFILE_SECURITY':
+      return {
+        ...state,
+        settings: {
+          ...state.settings,
+          profilePasswordHash: action.payload.passwordHash,
+          profileSalt: action.payload.salt,
+        },
+      };
+
+    default:
+      return state;
+  }
+};
+
+export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const [state, dispatch] = useReducer(appReducer, defaultState);
+
+  // Wrap dispatch to intercept SWITCH_PROFILE and ADD_PROFILE with duplicate logic
+  const enhancedDispatch = (action: Action) => {
+    if (action.type === 'SWITCH_PROFILE') {
+      const newState = loadState(action.payload);
+      dispatch({ type: 'SET_STATE', payload: newState });
+    } else if (action.type === 'ADD_PROFILE') {
+      const newName = action.payload;
+      if (!state.profiles.includes(newName)) {
+        // Just create the key in localStorage with default data (inherited default settings)
+        const newProfileState = {
+          ...defaultState,
+          settings: { ...state.settings }, // inherit settings
+          activeProfile: newName,
+          profiles: [...state.profiles, newName],
+        };
+        localStorage.setItem(getProfileKey(newName), JSON.stringify({
+          transactions: [], lots: [], closedTrades: [], dividends: [],
+          corporateActions: [], settings: newProfileState.settings, watchlist: []
+        }));
+      }
+      dispatch(action);
+    } else {
+      dispatch(action);
+    }
+  };
+
+  useEffect(() => {
+    const loadedState = loadState();
+    dispatch({ type: 'SET_STATE', payload: loadedState });
+  }, []);
+
+  useEffect(() => {
+    saveState(state);
+  }, [state]);
+
+  return (
+    <AppContext.Provider value={{ state, dispatch: enhancedDispatch }}>
+      {children}
+    </AppContext.Provider>
+  );
+};
+
+export const useAppContext = () => useContext(AppContext);
