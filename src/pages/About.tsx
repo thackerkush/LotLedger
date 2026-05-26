@@ -141,7 +141,26 @@ export const About: React.FC = () => {
             <ShieldCheck size={16} /> <span>Your data is 100% yours, offline, and secure.</span>
           </div>
         </div>
+      </div>
 
+      {/* Under Development Section */}
+      <div className="bg-financial-card border border-financial-border p-6 rounded-xl space-y-4 shadow">
+        <h3 className="text-base font-bold text-financial-text flex items-center">
+          <Info size={16} className="mr-2 text-amber-500" /> Features Under Development
+        </h3>
+        <p className="text-xs text-financial-muted leading-relaxed">
+          Some features are currently in an active state of development or have intentional limitations:
+        </p>
+        <ul className="list-disc pl-5 space-y-3 text-xs text-financial-muted">
+          <li>
+            <strong className="text-financial-text">Watchlist Price Alerts:</strong> 
+            Currently, alerts are either mocked or require manual triggering. A reliable and free live market data API is required to make these truly real-time. Integrating expensive enterprise APIs would conflict with our "free & fully offline" philosophy.
+          </li>
+          <li>
+            <strong className="text-financial-text">Unrealised Profit / Live CMP:</strong> 
+            Your portfolio's live valuation and unrealised profit metrics depend on Current Market Prices (CMP). As of now, you must enter CMP manually via the "Set CMP" override in Open Positions. We are exploring sustainable free data sources to automate this in the future without compromising your offline privacy.
+          </li>
+        </ul>
       </div>
 
       {/* Section 7: Disclaimer */}

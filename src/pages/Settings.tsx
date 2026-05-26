@@ -479,6 +479,24 @@ export const Settings: React.FC = () => {
     setRenameInputVal(newName);
   };
 
+  const handleRemoveProfile = async (pName: string) => {
+    if (state.profiles.length <= 1) {
+      showToast('Cannot delete the last remaining profile.', 'error');
+      return;
+    }
+    const confirmed = await showConfirm({
+      title: 'Delete Profile',
+      message: `Are you sure you want to permanently delete the profile "${pName}"? This action cannot be undone.`,
+      confirmLabel: 'Delete Profile',
+      variant: 'danger'
+    });
+
+    if (confirmed) {
+      dispatch({ type: 'DELETE_PROFILE', payload: pName });
+      showToast(`Profile "${pName}" deleted successfully.`, 'success');
+    }
+  };
+
   const handleRenameConfirm = (pName: string) => {
     const trimmed = renameInputVal.trim();
     if (!trimmed) {
@@ -650,6 +668,20 @@ export const Settings: React.FC = () => {
                   >
                     <Copy size={13} />
                   </button>
+
+                  {/* Delete button */}
+                  {state.profiles.length > 1 && (
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleRemoveProfile(pName);
+                      }}
+                      className="p-1.5 hover:bg-financial-card rounded text-financial-muted hover:text-financial-red transition-colors"
+                      title="Delete Profile"
+                    >
+                      <Trash2 size={13} />
+                    </button>
+                  )}
                 </div>
               </div>
             );
