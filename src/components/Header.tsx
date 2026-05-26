@@ -3,6 +3,7 @@ import { useLocation } from 'react-router-dom';
 import { ChevronDown, Plus, Trash2, Shield, User, Menu, Moon, Sun } from 'lucide-react';
 import { useAppContext } from '../context/AppContext';
 import { useConfirm } from './ConfirmDialog';
+import { usePrompt } from './PromptDialog';
 import { useToast } from './Toast';
 
 interface HeaderProps {
@@ -13,6 +14,7 @@ export const Header: React.FC<HeaderProps> = ({ onMenuClick }) => {
   const location = useLocation();
   const { state, dispatch } = useAppContext();
   const { showConfirm } = useConfirm();
+  const { showPrompt } = usePrompt();
   const { showToast } = useToast();
 
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
@@ -97,9 +99,14 @@ export const Header: React.FC<HeaderProps> = ({ onMenuClick }) => {
     }
   };
 
-  const handleNewProfile = () => {
+  const handleNewProfile = async () => {
     setIsDropdownOpen(false);
-    const newName = prompt('Enter new profile name:');
+    const newName = await showPrompt({
+      title: 'Create New Profile',
+      placeholder: 'Enter profile name...',
+      confirmLabel: 'Create Profile',
+      cancelLabel: 'Cancel'
+    });
     if (newName && newName.trim() !== '') {
       const trimmed = newName.trim();
       if (state.profiles.includes(trimmed)) {

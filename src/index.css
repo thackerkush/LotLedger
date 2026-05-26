@@ -177,3 +177,29 @@
     overflow: visible !important;
   }
 }
+
+/* Custom premium dropdown select menus matching the financial theme */
+select {
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke='%2371717a'%3e%3cpath stroke-linecap='round' stroke-linejoin='round' stroke-width='2.5' d='M19 9l-7 7-7-7'/%3e%3c/svg%3e");
+  background-repeat: no-repeat;
+  background-position: right 0.75rem center;
+  background-size: 0.9rem;
+  padding-right: 2.25rem !important;
+  transition: all 0.2s ease-in-out;
+}
+
+select:focus {
+  border-color: var(--financial-green) !important;
+  box-shadow: 0 0 0 1px var(--financial-green);
+}
+
+select option {
+  background-color: #121214 !important;
+  color: #f4f4f5 !important;
+}
+
+:root.light select option {
+  background-color: #ffffff !important;
+  color: #0f172a !important;
+}

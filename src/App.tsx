@@ -4,6 +4,7 @@ import { HashRouter, Routes, Route, useNavigate } from 'react-router-dom';
 import { AppProvider, useAppContext } from './context/AppContext';
 import { ToastProvider, useToast } from './components/Toast';
 import { ConfirmProvider } from './components/ConfirmDialog';
+import { PromptProvider } from './components/PromptDialog';
 import { Layout } from './components/Layout';
 import { exportToExcel } from './utils/excel';
 
@@ -283,9 +284,11 @@ export const App: React.FC = () => {
     <AppProvider>
       <ToastProvider>
         <ConfirmProvider>
-          <HashRouter>
-            <AppShell />
-          </HashRouter>
+          <PromptProvider>
+            <HashRouter>
+              <AppShell />
+            </HashRouter>
+          </PromptProvider>
         </ConfirmProvider>
       </ToastProvider>
     </AppProvider>

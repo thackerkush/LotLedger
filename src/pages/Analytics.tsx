@@ -344,7 +344,48 @@ export const Analytics: React.FC = () => {
       <div className="bg-financial-card border border-financial-border p-6 rounded-xl space-y-4 shadow">
         <h4 className="text-sm font-bold text-financial-text">Asset Performance Analysis by Stock</h4>
         
-        <div className="overflow-x-auto border border-financial-border/40 rounded-lg">
+        {/* Mobile Grid View (visible only on mobile) */}
+        <div className="md:hidden space-y-3">
+          {scriptStats.length > 0 ? (
+            scriptStats.map(stat => (
+              <div key={stat.script} className="border border-financial-border bg-financial-bg/25 rounded-xl p-4 space-y-3">
+                <div className="flex items-center justify-between border-b border-financial-border/40 pb-2">
+                  <span className="font-bold text-base text-financial-text uppercase">{stat.script}</span>
+                  <span className={`text-xs font-bold font-mono ${stat.netPnL >= 0 ? 'text-financial-green' : 'text-financial-red'}`}>
+                    {stat.netPnL >= 0 ? '+' : ''}{formatCurrency(stat.netPnL, state.settings.currencySymbol)}
+                  </span>
+                </div>
+                <div className="grid grid-cols-2 gap-3 text-xs">
+                  <div>
+                    <p className="text-financial-muted text-3xs font-semibold uppercase mb-0.5">Total Buy Cost</p>
+                    <p className="font-mono font-bold text-financial-text">{formatCurrency(stat.buyCost, state.settings.currencySymbol)}</p>
+                  </div>
+                  <div>
+                    <p className="text-financial-muted text-3xs font-semibold uppercase mb-0.5">Total Proceeds</p>
+                    <p className="font-mono font-bold text-financial-text">{formatCurrency(stat.sellProceeds, state.settings.currencySymbol)}</p>
+                  </div>
+                  <div>
+                    <p className="text-financial-muted text-3xs font-semibold uppercase mb-0.5">Net Returns</p>
+                    <p className={`font-mono font-bold ${stat.returnPercent >= 0 ? 'text-financial-green' : 'text-financial-red'}`}>
+                      {stat.returnPercent >= 0 ? '+' : ''}{stat.returnPercent.toFixed(2)}%
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-financial-muted text-3xs font-semibold uppercase mb-0.5">Win Rate / Trades</p>
+                    <p className="font-semibold text-financial-text">{stat.winRate.toFixed(1)}% ({stat.totalTrades} txns)</p>
+                  </div>
+                </div>
+              </div>
+            ))
+          ) : (
+            <div className="py-8 text-center text-financial-muted text-sm font-semibold bg-financial-bg/10 rounded-xl border border-dashed border-financial-border">
+              No records compiled.
+            </div>
+          )}
+        </div>
+
+        {/* Desktop Table View (hidden on mobile, visible on medium screens and up) */}
+        <div className="hidden md:block overflow-x-auto border border-financial-border/40 rounded-lg">
           <table className="w-full text-left text-sm whitespace-nowrap">
             <thead>
               <tr className="border-b border-financial-border text-financial-muted bg-financial-bg/30 text-xs uppercase font-bold tracking-wider">

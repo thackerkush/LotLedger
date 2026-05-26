@@ -3,6 +3,7 @@ import React, { useState, useRef } from 'react';
 import { useAppContext } from '../context/AppContext';
 import { useToast } from '../components/Toast';
 import { useConfirm } from '../components/ConfirmDialog';
+import { usePrompt } from '../components/PromptDialog';
 import { exportToExcel } from '../utils/excel';
 import { importFromExcel } from '../utils/import';
 import { processCSVImport } from '../utils/csvImport';
@@ -30,6 +31,7 @@ export const Settings: React.FC = () => {
   const { state, dispatch } = useAppContext();
   const { showToast } = useToast();
   const { showConfirm } = useConfirm();
+  const { showPrompt } = usePrompt();
 
   // Excel export settings
   const [exportFormat, setExportFormat] = useState<'multi-tab' | 'single-sheet'>('multi-tab');
@@ -699,8 +701,13 @@ export const Settings: React.FC = () => {
 
           {/* Add Profile Card */}
           <div
-            onClick={() => {
-              const name = prompt('Enter name for the new profile:');
+            onClick={async () => {
+              const name = await showPrompt({
+                title: 'Create New Profile',
+                placeholder: 'Enter profile name...',
+                confirmLabel: 'Create Profile',
+                cancelLabel: 'Cancel'
+              });
               if (name && name.trim()) {
                 const trimmed = name.trim();
                 if (state.profiles.includes(trimmed)) {
