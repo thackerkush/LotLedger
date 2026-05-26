@@ -1,7 +1,8 @@
 /* eslint-disable react-hooks/set-state-in-effect, react-hooks/exhaustive-deps, react-hooks/immutability, react-hooks/purity, @typescript-eslint/no-unused-vars, @typescript-eslint/no-explicit-any, prefer-const, react-refresh/only-export-components */
 import React, { useMemo, useState } from 'react';
 import { useAppContext } from '../context/AppContext';
-import { formatCurrency } from '../utils/calculations';
+import { formatCurrency, calculateXIRR, calculateMaxDrawdown } from '../utils/calculations';
+import type { CashFlow } from '../utils/calculations';
 import {
   PieChart,
   Pie,
@@ -176,6 +177,44 @@ export const Dashboard: React.FC = () => {
       avgLoss
     };
   }, [closedTrades]);
+
+  // Advanced Metrics: XIRR & Max Drawdown
+  const { xirr, maxDrawdown } = useMemo(() => {
+    const cashFlows: CashFlow[] = [];
+    
+    // Realized flows
+    closedTrades.forEach(ct => {
+      cashFlows.push({ date: new Date(ct.buyDate), amount: -ct.buyCost });
+      cashFlows.push({ date: new Date(ct.sellDate), amount: ct.sellProceeds });
+    });
+    
+    // Active position flows
+    let todayValue = 0;
+    lots.forEach(lot => {
+      if (lot.remainingQty > 0) {
+        cashFlows.push({ date: new Date(lot.buyDate), amount: -lot.totalCost });
+        todayValue += lot.remainingQty * (lot.currentPrice ?? lot.buyPrice);
+      }
+    });
+    
+    // Dividends
+    state.dividends.forEach(div => {
+      cashFlows.push({ date: new Date(div.date), amount: div.totalAmount });
+    });
+    
+    // Terminal value
+    if (todayValue > 0) {
+      cashFlows.push({ date: new Date(), amount: todayValue });
+    }
+
+    const calculatedXirr = calculateXIRR(cashFlows) ?? 0;
+
+    // Max Drawdown approximation using realized equity curve
+    const equityCurve = cumulativePnLData.map(d => d['Cumulative Net P&L'] + investedCapital);
+    const mdd = calculateMaxDrawdown(equityCurve);
+
+    return { xirr: calculatedXirr, maxDrawdown: mdd };
+  }, [closedTrades, lots, state.dividends, cumulativePnLData, investedCapital]);
 
   // Visual Theme Colors
   const COLORS = ['#10B981', '#3B82F6', '#F59E0B', '#8B5CF6', '#EC4899', '#374151', '#6B7280'];
@@ -524,6 +563,20 @@ export const Dashboard: React.FC = () => {
             <p className="text-xs text-financial-muted mb-1 font-semibold">Win/Loss Ratio</p>
             <p className="text-xl font-bold text-financial-text">
               {winRateStats.wins}:{winRateStats.losses}
+            </p>
+          </div>
+          
+          <div className="p-3 bg-financial-bg rounded-lg border border-financial-border col-span-2 md:col-span-1">
+            <p className="text-xs text-financial-muted mb-1 font-semibold">Portfolio XIRR</p>
+            <p className={`text-xl font-bold ${xirr >= 0 ? 'text-financial-green' : 'text-financial-red'}`}>
+              {(xirr * 100).toFixed(2)}%
+            </p>
+          </div>
+          
+          <div className="p-3 bg-financial-bg rounded-lg border border-financial-border col-span-2 md:col-span-1">
+            <p className="text-xs text-financial-muted mb-1 font-semibold">Max Drawdown</p>
+            <p className="text-xl font-bold text-financial-red">
+              {(maxDrawdown * 100).toFixed(2)}%
             </p>
           </div>
 

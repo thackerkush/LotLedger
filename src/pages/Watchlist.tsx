@@ -4,12 +4,14 @@ import { useToast } from '../components/Toast';
 import { useConfirm } from '../components/ConfirmDialog';
 import { formatCurrency } from '../utils/calculations';
 import type { WatchlistEntry } from '../types';
-import { Search, Trash2, Eye } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { Search, Trash2, Eye, PlusCircle } from 'lucide-react';
 
 export const Watchlist: React.FC = () => {
   const { state, dispatch } = useAppContext();
   const { showToast } = useToast();
   const { showConfirm } = useConfirm();
+  const navigate = useNavigate();
 
   // Form inputs
   const [script, setScript] = useState('');
@@ -159,10 +161,18 @@ export const Watchlist: React.FC = () => {
                           <td className="py-4 px-4 text-xs text-financial-muted max-w-xs truncate" title={w.notes}>
                             {w.notes || '-'}
                           </td>
-                          <td className="py-4 px-5 text-right">
+                          <td className="py-4 px-5 text-right space-x-2">
+                            <button
+                              onClick={() => navigate('/trade-entry', { state: { script: w.script } })}
+                              className="text-financial-muted hover:text-financial-green p-1 hover:bg-financial-bg rounded transition-colors"
+                              title="Add Trade"
+                            >
+                              <PlusCircle size={15} />
+                            </button>
                             <button
                               onClick={() => handleDeleteWatch(w.id, w.script)}
                               className="text-financial-muted hover:text-financial-red p-1 hover:bg-financial-bg rounded transition-colors"
+                              title="Delete from Watchlist"
                             >
                               <Trash2 size={15} />
                             </button>

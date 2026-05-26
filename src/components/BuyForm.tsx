@@ -1,4 +1,5 @@
 import React, { useState, useMemo } from 'react';
+import { useLocation } from 'react-router-dom';
 import { useAppContext } from '../context/AppContext';
 import { useToast } from './Toast';
 import { calculateBuyCharges, formatCurrency } from '../utils/calculations';
@@ -8,8 +9,9 @@ export const BuyForm: React.FC = () => {
   const { state, dispatch } = useAppContext();
   const { showToast } = useToast();
 
+  const location = useLocation();
   const [date, setDate] = useState(() => new Date().toISOString().split('T')[0]);
-  const [script, setScript] = useState('');
+  const [script, setScript] = useState(location.state?.script || '');
   const [exchange, setExchange] = useState<'NSE' | 'BSE'>('NSE');
   const [portfolio, setPortfolio] = useState(() => state.settings.portfolios[0] || 'Default');
   const [quantity, setQuantity] = useState<number | ''>('');

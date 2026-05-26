@@ -5,6 +5,7 @@ import { useToast } from '../components/Toast';
 import { useConfirm } from '../components/ConfirmDialog';
 import { exportToExcel } from '../utils/excel';
 import { importFromExcel } from '../utils/import';
+import { processCSVImport } from '../utils/csvImport';
 import type { Settings as SettingsType, StockMaster } from '../types';
 import {
   Upload,
@@ -38,6 +39,9 @@ export const Settings: React.FC = () => {
   const [isSyncing, setIsSyncing] = useState(false);
   const [syncError, setSyncError] = useState<{ message: string; downloadUrl: string; instructions: string[] } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  
+  const [isTradesCsvUploading, setIsTradesCsvUploading] = useState(false);
+  const tradesCsvInputRef = useRef<HTMLInputElement>(null);
 
   // Excel restore state
   const restoreInputRef = useRef<HTMLInputElement>(null);
@@ -164,6 +168,37 @@ export const Settings: React.FC = () => {
       }
     };
     reader.readAsText(file);
+  };
+
+  const handleTradesCSVUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setIsTradesCsvUploading(true);
+    showToast('Parsing trades CSV...', 'info');
+
+    processCSVImport(
+      file,
+      state.settings,
+      state.settings.portfolios[0] || 'Default',
+      (transactions, lots, closedTrades) => {
+        const newState = {
+          ...state,
+          transactions: [...state.transactions, ...transactions],
+          lots: [...state.lots, ...lots],
+          closedTrades: [...state.closedTrades, ...closedTrades]
+        };
+        dispatch({ type: 'SET_STATE', payload: newState });
+        showToast(`Imported ${transactions.length} trades successfully.`, 'success');
+        setIsTradesCsvUploading(false);
+        if (tradesCsvInputRef.current) tradesCsvInputRef.current.value = '';
+      },
+      (error) => {
+        showToast(`CSV Import Error: ${error}`, 'error');
+        setIsTradesCsvUploading(false);
+        if (tradesCsvInputRef.current) tradesCsvInputRef.current.value = '';
+      }
+    );
   };
 
   // Auto-sync NSE master via Vercel serverless proxy (if feature enabled)
@@ -783,6 +818,35 @@ export const Settings: React.FC = () => {
             >
               <Upload size={12} />
               <span>{isCsvUploading ? 'Syncing...' : 'Upload CSV'}</span>
+            </button>
+          </div>
+        </div>
+
+        {/* Broker Trades CSV Import */}
+        <div className="bg-financial-card border border-financial-border p-6 rounded-xl space-y-4">
+          <h3 className="text-md font-bold text-financial-text border-b border-financial-border pb-3 flex items-center">
+            <Upload size={18} className="mr-2 text-financial-green" /> Import Broker Trades (CSV)
+          </h3>
+          <p className="text-xs text-financial-muted leading-relaxed">
+            Upload a CSV containing your historical trades to bulk import them into LotLedger. Required columns: <code className="text-financial-text">Date</code>, <code className="text-financial-text">Script</code>, <code className="text-financial-text">Type</code> (BUY/SELL), <code className="text-financial-text">Quantity</code>, <code className="text-financial-text">Price</code>.
+          </p>
+
+          <div className="flex items-center justify-between bg-financial-bg/50 border border-financial-border p-4 rounded-lg mt-4">
+            <input
+              type="file"
+              accept=".csv"
+              ref={tradesCsvInputRef}
+              onChange={handleTradesCSVUpload}
+              className="hidden"
+            />
+            
+            <button
+              onClick={() => tradesCsvInputRef.current?.click()}
+              disabled={isTradesCsvUploading}
+              className="px-4 py-2 bg-blue-600 hover:bg-blue-600/90 text-white font-bold rounded-lg text-xs shadow flex items-center space-x-1 cursor-pointer w-full justify-center transition-all"
+            >
+              <Upload size={12} />
+              <span>{isTradesCsvUploading ? 'Processing Trades...' : 'Upload Trades CSV'}</span>
             </button>
           </div>
         </div>

@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { useLocation } from 'react-router-dom';
-import { ChevronDown, Plus, Trash2, Shield, User, Menu } from 'lucide-react';
+import { ChevronDown, Plus, Trash2, Shield, User, Menu, Moon, Sun } from 'lucide-react';
 import { useAppContext } from '../context/AppContext';
 import { useConfirm } from './ConfirmDialog';
 import { useToast } from './Toast';
@@ -16,7 +16,29 @@ export const Header: React.FC<HeaderProps> = ({ onMenuClick }) => {
   const { showToast } = useToast();
 
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
+  const [isLightMode, setIsLightMode] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    // Initialize theme from localStorage
+    const savedTheme = localStorage.getItem('lotledger_theme');
+    if (savedTheme === 'light') {
+      setIsLightMode(true);
+      document.documentElement.classList.add('light');
+    }
+  }, []);
+
+  const toggleTheme = () => {
+    const newMode = !isLightMode;
+    setIsLightMode(newMode);
+    if (newMode) {
+      document.documentElement.classList.add('light');
+      localStorage.setItem('lotledger_theme', 'light');
+    } else {
+      document.documentElement.classList.remove('light');
+      localStorage.setItem('lotledger_theme', 'dark');
+    }
+  };
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -91,7 +113,7 @@ export const Header: React.FC<HeaderProps> = ({ onMenuClick }) => {
   };
 
   return (
-    <header className="h-16 bg-zinc-950/80 backdrop-blur-md border-b border-zinc-900/60 fixed top-0 right-0 left-0 md:left-64 z-30 flex items-center justify-between px-4 md:px-6 select-none">
+    <header className="h-16 bg-financial-bg/90 backdrop-blur-md border-b border-financial-border fixed top-0 right-0 left-0 md:left-64 z-30 flex items-center justify-between px-4 md:px-6 select-none print-hide">
       {/* Left side: hamburger (mobile) + page title */}
       <div className="flex items-center space-x-3">
         {/* Hamburger menu — mobile only */}
@@ -103,63 +125,73 @@ export const Header: React.FC<HeaderProps> = ({ onMenuClick }) => {
           <Menu size={20} />
         </button>
 
-        <h2 className="text-base font-bold font-outfit text-zinc-100 tracking-tight">
+        <h2 className="text-base font-bold font-outfit text-financial-text tracking-tight">
           {getPageTitle()}
         </h2>
       </div>
 
-      {/* Right side: profile dropdown */}
-      <div className="relative" ref={dropdownRef}>
+      {/* Right side: theme toggle & profile dropdown */}
+      <div className="flex items-center space-x-2 relative">
         <button
-          onClick={() => setIsDropdownOpen(!isDropdownOpen)}
-          className="flex items-center space-x-2 px-3 py-1.5 bg-zinc-900 border border-zinc-800/80 rounded-lg text-zinc-300 hover:bg-zinc-800 hover:text-zinc-100 transition-all cursor-pointer shadow-sm text-xs font-semibold min-h-[36px]"
+          onClick={toggleTheme}
+          className="p-2 bg-financial-card border border-financial-border rounded-lg text-financial-text hover:text-financial-green transition-colors min-h-[36px] min-w-[36px] flex items-center justify-center"
+          aria-label="Toggle theme"
         >
-          <User size={13} className="text-zinc-500 shrink-0" />
-          <span className="max-w-[80px] truncate">{state.activeProfile}</span>
-          {state.settings.profilePasswordHash && <Shield size={11} className="text-emerald-500 shrink-0" />}
-          <ChevronDown size={12} className="text-zinc-500 shrink-0" />
+          {isLightMode ? <Sun size={14} /> : <Moon size={14} />}
         </button>
 
-        {isDropdownOpen && (
-          <div className="absolute right-0 mt-2 w-52 bg-zinc-900 border border-zinc-800 rounded-lg shadow-xl py-1 z-50">
-            <div className="px-3 py-1.5 border-b border-zinc-800/60">
-              <p className="text-[9px] text-zinc-500 uppercase font-bold tracking-wider">Profiles</p>
-            </div>
+        <div className="relative" ref={dropdownRef}>
+          <button
+            onClick={() => setIsDropdownOpen(!isDropdownOpen)}
+            className="flex items-center space-x-2 px-3 py-1.5 bg-financial-card border border-financial-border rounded-lg text-financial-text hover:text-financial-green transition-all cursor-pointer shadow-sm text-xs font-semibold min-h-[36px]"
+          >
+            <User size={13} className="text-financial-muted shrink-0" />
+            <span className="max-w-[80px] truncate">{state.activeProfile}</span>
+            {state.settings.profilePasswordHash && <Shield size={11} className="text-financial-green shrink-0" />}
+            <ChevronDown size={12} className="text-financial-muted shrink-0" />
+          </button>
 
-            <div className="max-h-48 overflow-y-auto py-1 scrollbar-thin">
-              {state.profiles.map((profile) => (
+          {isDropdownOpen && (
+            <div className="absolute right-0 mt-2 w-52 bg-financial-card border border-financial-border rounded-lg shadow-xl py-1 z-50">
+              <div className="px-3 py-1.5 border-b border-financial-border">
+                <p className="text-[9px] text-financial-muted uppercase font-bold tracking-wider">Profiles</p>
+              </div>
+
+              <div className="max-h-48 overflow-y-auto py-1 scrollbar-thin">
+                {state.profiles.map((profile) => (
+                  <button
+                    key={profile}
+                    onClick={() => handleProfileSwitch(profile)}
+                    className={`w-full text-left px-3 py-1.5 text-xs flex items-center justify-between hover:bg-financial-bg transition-colors min-h-[36px] ${
+                      profile === state.activeProfile ? 'text-financial-green font-bold bg-financial-green/5' : 'text-financial-text'
+                    }`}
+                  >
+                    <span>{profile}</span>
+                    {profile === state.activeProfile && <div className="w-1 h-1 rounded-full bg-financial-green shadow-[0_0_6px_#10b981]" />}
+                  </button>
+                ))}
+              </div>
+
+              <div className="border-t border-financial-border mt-1 pt-1">
                 <button
-                  key={profile}
-                  onClick={() => handleProfileSwitch(profile)}
-                  className={`w-full text-left px-3 py-1.5 text-xs flex items-center justify-between hover:bg-zinc-800 transition-colors min-h-[36px] ${
-                    profile === state.activeProfile ? 'text-emerald-400 font-bold bg-emerald-500/5' : 'text-zinc-300'
-                  }`}
+                  onClick={handleNewProfile}
+                  className="w-full text-left px-3 py-1.5 text-xs font-semibold text-financial-text hover:text-financial-green transition-colors flex items-center min-h-[36px]"
                 >
-                  <span>{profile}</span>
-                  {profile === state.activeProfile && <div className="w-1 h-1 rounded-full bg-emerald-400 shadow-[0_0_6px_#10b981]" />}
+                  <Plus size={12} className="mr-1.5 text-financial-green" /> New Profile
                 </button>
-              ))}
-            </div>
 
-            <div className="border-t border-zinc-800/60 mt-1 pt-1">
-              <button
-                onClick={handleNewProfile}
-                className="w-full text-left px-3 py-1.5 text-xs font-semibold text-zinc-300 hover:bg-zinc-800 transition-colors flex items-center min-h-[36px]"
-              >
-                <Plus size={12} className="mr-1.5 text-emerald-400" /> New Profile
-              </button>
-
-              {state.activeProfile !== 'Default' && (
-                <button
-                  onClick={handleDeleteProfile}
-                  className="w-full text-left px-3 py-1.5 text-xs font-semibold text-rose-400 hover:bg-zinc-800 transition-colors flex items-center min-h-[36px]"
-                >
-                  <Trash2 size={12} className="mr-1.5 text-rose-400" /> Delete Profile
-                </button>
-              )}
+                {state.activeProfile !== 'Default' && (
+                  <button
+                    onClick={handleDeleteProfile}
+                    className="w-full text-left px-3 py-1.5 text-xs font-semibold text-financial-red hover:bg-financial-red/10 transition-colors flex items-center min-h-[36px]"
+                  >
+                    <Trash2 size={12} className="mr-1.5 text-financial-red" /> Delete Profile
+                  </button>
+                )}
+              </div>
             </div>
-          </div>
-        )}
+          )}
+        </div>
       </div>
     </header>
   );

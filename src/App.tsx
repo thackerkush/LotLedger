@@ -149,7 +149,31 @@ const AppShell: React.FC = () => {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isLocked, showSplash, state, navigate]);
+  }, [isLocked, showSplash, state, navigate, showToast]);
+
+  // 5. Watchlist Price Alerts (Section 5)
+  const alertedScripts = useRef<Set<string>>(new Set());
+
+  useEffect(() => {
+    if (isLocked || showSplash) return;
+    
+    state.watchlist.forEach(entry => {
+      if (entry.targetPrice === null) return;
+      
+      // Find current price of this script from open lots
+      const activeLot = state.lots.find(l => l.script === entry.script && l.currentPrice !== undefined);
+      if (!activeLot || !activeLot.currentPrice) return;
+
+      const isTargetMet = activeLot.currentPrice >= entry.targetPrice;
+      if (isTargetMet && !alertedScripts.current.has(entry.script)) {
+        showToast(`Price Alert: ${entry.script} reached your target of ₹${entry.targetPrice}!`, 'success');
+        alertedScripts.current.add(entry.script);
+      } else if (!isTargetMet && alertedScripts.current.has(entry.script)) {
+        // Reset alert if it drops below target
+        alertedScripts.current.delete(entry.script);
+      }
+    });
+  }, [state.watchlist, state.lots, isLocked, showSplash, showToast]);
 
   // Splash Screen Overlay Rendering
   if (showSplash) {

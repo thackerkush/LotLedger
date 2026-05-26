@@ -3,14 +3,34 @@
 @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&display=swap');
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
 
+:root {
+  --financial-bg: #09090b;
+  --financial-card: #121214;
+  --financial-border: #1f1f23;
+  --financial-text: #f4f4f5;
+  --financial-muted: #71717a;
+  --financial-green: #10b981;
+  --financial-red: #ef4444;
+}
+
+:root.light {
+  --financial-bg: #f8fafc;
+  --financial-card: #ffffff;
+  --financial-border: #e2e8f0;
+  --financial-text: #0f172a;
+  --financial-muted: #64748b;
+  --financial-green: #059669;
+  --financial-red: #dc2626;
+}
+
 @theme {
-  --color-financial-bg: #09090b;
-  --color-financial-card: #121214;
-  --color-financial-border: #1f1f23;
-  --color-financial-text: #f4f4f5;
-  --color-financial-muted: #71717a;
-  --color-financial-green: #10b981;
-  --color-financial-red: #ef4444;
+  --color-financial-bg: var(--financial-bg);
+  --color-financial-card: var(--financial-card);
+  --color-financial-border: var(--financial-border);
+  --color-financial-text: var(--financial-text);
+  --color-financial-muted: var(--financial-muted);
+  --color-financial-green: var(--financial-green);
+  --color-financial-red: var(--financial-red);
 }
 
 @layer base {
@@ -109,4 +129,51 @@
   );
   animation: shimmer 2s infinite;
   content: '';
+}
+
+/* --- Print Stylesheet (PDF Export) --- */
+@media print {
+  @page {
+    margin: 10mm;
+  }
+  
+  /* Force background colors to print */
+  * {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  body {
+    background-color: #ffffff !important;
+    color: #000000 !important;
+  }
+
+  /* Hide navigation and UI controls */
+  .print-hide,
+  nav,
+  header,
+  aside,
+  button,
+  .quick-add-fab {
+    display: none !important;
+  }
+
+  /* Expand main content area to full width */
+  main {
+    margin: 0 !important;
+    padding: 0 !important;
+    width: 100% !important;
+  }
+
+  /* Remove card backgrounds and borders to save ink */
+  .bg-financial-card {
+    background-color: transparent !important;
+    border: none !important;
+    box-shadow: none !important;
+  }
+
+  /* Ensure tables print cleanly without scrolling */
+  .overflow-x-auto {
+    overflow: visible !important;
+  }
 }
