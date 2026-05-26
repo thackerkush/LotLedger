@@ -662,7 +662,7 @@ export const Settings: React.FC = () => {
             <p className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">Official Exchange CSV Sources</p>
             <div className="flex flex-col sm:flex-row gap-2">
               <a
-                href="https://www1.nseindia.com/content/equities/EQUITY_L.csv"
+                href="https://nsearchives.nseindia.com/content/equities/EQUITY_L.csv"
                 target="_blank"
                 rel="noopener noreferrer"
                 className="flex items-center gap-1.5 px-3 py-2 bg-blue-600/10 hover:bg-blue-600/20 border border-blue-500/30 text-blue-400 text-xs font-semibold rounded-lg transition-colors"
