@@ -212,7 +212,7 @@ export const SellForm: React.FC = () => {
     <div className="space-y-8">
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
         {/* Left Side Form Fields */}
-        <form onSubmit={handleSubmit} className="lg:col-span-2 space-y-6 bg-financial-card p-6 rounded-xl border border-financial-border">
+        <form id="sell-form" onSubmit={handleSubmit} className="lg:col-span-2 space-y-6 bg-financial-card p-6 rounded-xl border border-financial-border">
           <h3 className="text-lg font-bold text-financial-text border-b border-financial-border pb-3">Enter SELL Transaction</h3>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -318,19 +318,6 @@ export const SellForm: React.FC = () => {
             />
           </div>
 
-          <button
-            type="submit"
-            disabled={totalMatched !== Number(quantity) || Number(quantity) <= 0}
-            className={`w-full py-3 text-white font-bold rounded-lg transition-transform shadow-md ${
-              totalMatched === Number(quantity) && Number(quantity) > 0
-                ? 'bg-financial-red hover:bg-financial-red/90 cursor-pointer active:scale-98'
-                : 'bg-financial-border text-financial-muted cursor-not-allowed'
-            }`}
-          >
-            {totalMatched === Number(quantity) && Number(quantity) > 0
-              ? 'Execute SELL Trade'
-              : 'Match Lots to Continue'}
-          </button>
         </form>
 
         {/* Right Side Cost Breakdown Panel */}
@@ -382,7 +369,7 @@ export const SellForm: React.FC = () => {
             </button>
           </div>
 
-          <div className="overflow-x-auto">
+          <div className="overflow-x-auto overflow-y-auto max-h-64 border border-financial-border/40 rounded-lg">
             <table className="w-full text-left text-sm">
               <thead>
                 <tr className="border-b border-financial-border text-financial-muted">
@@ -452,6 +439,24 @@ export const SellForm: React.FC = () => {
           </div>
         </div>
       )}
+
+      {/* Sticky Submit Button */}
+      <div className="sticky bottom-0 bg-financial-bg pt-3 pb-4 border-t border-financial-border z-10">
+        <button
+          form="sell-form"
+          type="submit"
+          disabled={totalMatched !== Number(quantity) || Number(quantity) <= 0}
+          className={`w-full py-3 text-white font-bold rounded-lg transition-transform shadow-md ${
+            totalMatched === Number(quantity) && Number(quantity) > 0
+              ? 'bg-financial-red hover:bg-financial-red/90 cursor-pointer active:scale-98'
+              : 'bg-financial-border text-financial-muted cursor-not-allowed'
+          }`}
+        >
+          {totalMatched === Number(quantity) && Number(quantity) > 0
+            ? 'Execute SELL Trade'
+            : 'Match Lots to Continue'}
+        </button>
+      </div>
     </div>
   );
 };

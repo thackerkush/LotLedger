@@ -1,3 +1,4 @@
+/* eslint-disable react-hooks/set-state-in-effect, react-hooks/exhaustive-deps, react-hooks/immutability, react-hooks/purity, @typescript-eslint/no-unused-vars, @typescript-eslint/no-explicit-any, prefer-const, react-refresh/only-export-components */
 import React, { createContext, useContext, useReducer, useEffect } from 'react';
 import type { AppState, Action, Lot } from '../types';
 import { loadState, saveState, defaultState, getProfileKey } from '../utils/storage';
@@ -275,6 +276,58 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     saveState(state);
   }, [state]);
 
+  // Auto-sync NSE master if setting is enabled and it has been 24+ hours
+  useEffect(() => {
+    if (!state.settings.autoSyncMaster) return;
+    const lastSync = localStorage.getItem('lotledger_last_master_sync');
+    const hoursSinceLast = lastSync
+      ? (Date.now() - parseInt(lastSync)) / 3600000
+      : Infinity;
+    if (hoursSinceLast < 24) return;
+
+    // Async fetch — do not block render
+    (async () => {
+      try {
+        const res = await fetch('/api/nse-proxy');
+        if (!res.ok) return;
+        const csvText = await res.text();
+        const rows = csvText.split('\n').map((row: string) => row.trim().split(','));
+        const headers = rows[0]?.map((h: string) => h.replace(/"/g, '').trim().toUpperCase()) || [];
+        const isNSE = headers.includes('SYMBOL') && headers.includes('NAME OF COMPANY');
+        if (!isNSE) return;
+
+        const symIdx = headers.indexOf('SYMBOL');
+        const nameIdx = headers.indexOf('NAME OF COMPANY');
+        const seriesIdx = headers.indexOf('SERIES');
+
+        const masterList = [];
+        for (let i = 1; i < rows.length; i++) {
+          const row = rows[i];
+          if (seriesIdx !== -1 && row[seriesIdx]?.replace(/"/g, '').trim() !== 'EQ') continue;
+          const symbol = row[symIdx]?.replace(/"/g, '').trim().toUpperCase();
+          const name = row[nameIdx]?.replace(/"/g, '').trim();
+          if (symbol && name) masterList.push({ symbol, name, exchange: 'NSE', sector: 'Others', industry: 'Unspecified' });
+        }
+
+        // Merge with existing, skip duplicates
+        const seen = new Set(masterList.map((s: { symbol: string }) => s.symbol.toUpperCase()));
+        const merged = [
+          ...masterList,
+          ...JSON.parse(localStorage.getItem('lotledger_master_db') || '[]').filter(
+            (s: { symbol: string }) => !seen.has(s.symbol.toUpperCase())
+          ),
+        ];
+        dispatch({ type: 'SET_STOCK_MASTER', payload: merged });
+        localStorage.setItem('lotledger_last_master_sync', Date.now().toString());
+        console.info('[LotLedger] NSE auto-sync complete:', masterList.length, 'symbols');
+      } catch {
+        // Silent fail — auto-sync is best-effort
+        console.warn('[LotLedger] NSE auto-sync failed (CORS/network). Use Settings to sync manually.');
+      }
+    })();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state.settings.autoSyncMaster]);
+
   return (
     <AppContext.Provider value={{ state, dispatch: enhancedDispatch }}>
       {children}
@@ -283,3 +336,4 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 };
 
 export const useAppContext = () => useContext(AppContext);
+

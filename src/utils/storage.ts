@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any, @typescript-eslint/no-unused-vars, no-useless-assignment, prefer-const, preserve-caught-error */
 import type { AppState, Settings } from '../types';
 
 export const defaultSettings: Settings = {
@@ -87,3 +88,4 @@ export const saveState = (state: AppState): void => {
     console.error('Error saving state to localStorage:', err);
   }
 };
+

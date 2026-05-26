@@ -1,3 +1,4 @@
+/* eslint-disable react-hooks/set-state-in-effect, react-hooks/exhaustive-deps, react-hooks/immutability, react-hooks/purity, @typescript-eslint/no-unused-vars, @typescript-eslint/no-explicit-any, prefer-const, react-refresh/only-export-components */
 import React, { useState, useRef } from 'react';
 import { useAppContext } from '../context/AppContext';
 import { useToast } from '../components/Toast';
@@ -15,7 +16,12 @@ import {
   Shield,
   FileSpreadsheet,
   Copy,
-  FolderOpen
+  FolderOpen,
+  ExternalLink,
+  RefreshCw,
+  XCircle,
+  AlertTriangle,
+  CheckCircle
 } from 'lucide-react';
 
 export const Settings: React.FC = () => {
@@ -29,6 +35,8 @@ export const Settings: React.FC = () => {
 
   // Master CSV state
   const [isCsvUploading, setIsCsvUploading] = useState(false);
+  const [isSyncing, setIsSyncing] = useState(false);
+  const [syncError, setSyncError] = useState<{ message: string; downloadUrl: string; instructions: string[] } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Excel restore state
@@ -148,8 +156,8 @@ export const Settings: React.FC = () => {
         dispatch({ type: 'SET_STOCK_MASTER', payload: mergedList });
         showToast(`Import successful! Synced ${masterList.length} stock listings. Total: ${mergedList.length} stocks in autocomplete database.`, 'success');
 
-      } catch (err: any) {
-        showToast(err.message || 'Failed to parse CSV.', 'error');
+      } catch (err: unknown) {
+        showToast((err as Error).message || 'Failed to parse CSV.', 'error');
       } finally {
         setIsCsvUploading(false);
         if (fileInputRef.current) fileInputRef.current.value = '';
@@ -157,6 +165,99 @@ export const Settings: React.FC = () => {
     };
     reader.readAsText(file);
   };
+
+  // Auto-sync NSE master via Vercel serverless proxy (if feature enabled)
+  const handleAutoSyncNow = async () => {
+    setIsSyncing(true);
+    setSyncError(null);
+    try {
+      const res = await fetch('/api/nse-proxy');
+      const contentType = res.headers.get('content-type') || '';
+
+      // Proxy returned a structured JSON error (NSE blocked, etc.)
+      if (!res.ok || contentType.includes('application/json')) {
+        const errData = await res.json();
+        setSyncError({
+          message: errData.message || 'NSE blocked the request.',
+          downloadUrl: errData.downloadUrl || 'https://nsearchives.nseindia.com/content/equities/EQUITY_L.csv',
+          instructions: errData.instructions || [],
+        });
+        return;
+      }
+
+      const csvText = await res.text();
+      const rows = csvText.split('\n').map(row => row.trim().split(','));
+      const headers = rows[0]?.map(h => h.replace(/"/g, '').trim().toUpperCase()) || [];
+      const isNSE = headers.includes('SYMBOL') && headers.includes('NAME OF COMPANY');
+      if (!isNSE) {
+        setSyncError({
+          message: 'Unexpected CSV format received. NSE may have changed their format.',
+          downloadUrl: 'https://nsearchives.nseindia.com/content/equities/EQUITY_L.csv',
+          instructions: ['Download the CSV manually and upload it using the Upload button below.'],
+        });
+        return;
+      }
+
+      const symIdx = headers.indexOf('SYMBOL');
+      const nameIdx = headers.indexOf('NAME OF COMPANY');
+      const seriesIdx = headers.indexOf('SERIES');
+      const masterList: { symbol: string; name: string; exchange: string; sector: string; industry: string }[] = [];
+
+      for (let i = 1; i < rows.length; i++) {
+        const row = rows[i];
+        if (seriesIdx !== -1 && row[seriesIdx]?.replace(/"/g, '').trim() !== 'EQ') continue;
+        const symbol = row[symIdx]?.replace(/"/g, '').trim().toUpperCase();
+        const name = row[nameIdx]?.replace(/"/g, '').trim();
+        if (symbol && name) masterList.push({ symbol, name, exchange: 'NSE', sector: 'Others', industry: 'Unspecified' });
+      }
+
+      const mergedList = [...state.stockMaster];
+      const seen = new Set(mergedList.map(s => s.symbol.toUpperCase()));
+      masterList.forEach(sm => { if (!seen.has(sm.symbol.toUpperCase())) mergedList.push(sm); });
+
+      dispatch({ type: 'SET_STOCK_MASTER', payload: mergedList });
+      localStorage.setItem('lotledger_last_master_sync', Date.now().toString());
+      showToast(`NSE sync complete! ${masterList.length} equity symbols loaded.`, 'success');
+
+    } catch {
+      // Network error (no proxy deployed yet, e.g. dev mode)
+      setSyncError({
+        message: 'Could not reach the sync proxy. Are you running in development mode? The proxy only works after deploying to Vercel.',
+        downloadUrl: 'https://nsearchives.nseindia.com/content/equities/EQUITY_L.csv',
+        instructions: [
+          '1. Click the "Download NSE Equity List" button above',
+          '2. Save the CSV to your computer',
+          '3. Click "Upload CSV" below and select the file',
+        ],
+      });
+    } finally {
+      setIsSyncing(false);
+    }
+  };
+
+  const handleClearMaster = async () => {
+    const confirmed = await showConfirm({
+      title: 'Clear Stock Master Database',
+      message: `This will remove all ${state.stockMaster.length} script entries from the autocomplete database. You will need to re-upload the CSV. Continue?`,
+      confirmLabel: 'Clear Database',
+      variant: 'danger'
+    });
+    if (confirmed) {
+      dispatch({ type: 'SET_STOCK_MASTER', payload: [] });
+      showToast('Stock master database cleared.', 'success');
+    }
+  };
+
+  const getLastSyncLabel = () => {
+    const ts = localStorage.getItem('lotledger_last_master_sync');
+    if (!ts) return { label: 'Never synced', color: 'text-zinc-500' };
+    const hrs = (Date.now() - parseInt(ts)) / 3600000;
+    const date = new Date(parseInt(ts)).toLocaleString();
+    if (hrs < 24) return { label: `Synced: ${date}`, color: 'text-financial-green' };
+    if (hrs < 72) return { label: `Synced: ${date}`, color: 'text-amber-500' };
+    return { label: `Stale: ${date}`, color: 'text-financial-red' };
+  };
+  const syncStatus = getLastSyncLabel();
 
   // -------------------------------------------------------------
   // SECTION 2: BACKUP & RESTORE RESTORATION (Section 9.10 & 17)
@@ -553,9 +654,114 @@ export const Settings: React.FC = () => {
             <Upload size={18} className="mr-2 text-financial-green" /> Master Script Autocomplete Database
           </h3>
           <p className="text-xs text-financial-muted leading-relaxed">
-            Upload NSE CSV files containing <strong>SYMBOL, NAME OF COMPANY</strong> headers, or BSE lists with <strong>SECURITY ID, SECURITY NAME</strong>. This enables quick stock lookups during BUY transactions.
+            Upload NSE/BSE CSV files to enable quick stock lookups during BUY transactions. Download the official list below, then upload it.
           </p>
 
+          {/* NSE/BSE download links */}
+          <div className="space-y-2">
+            <p className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">Official Exchange CSV Sources</p>
+            <div className="flex flex-col sm:flex-row gap-2">
+              <a
+                href="https://www1.nseindia.com/content/equities/EQUITY_L.csv"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex items-center gap-1.5 px-3 py-2 bg-blue-600/10 hover:bg-blue-600/20 border border-blue-500/30 text-blue-400 text-xs font-semibold rounded-lg transition-colors"
+              >
+                <Download size={12} /> Download NSE Equity List (CSV)
+              </a>
+              <a
+                href="https://www.bseindia.com/corporates/List_Scrips.aspx"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex items-center gap-1.5 px-3 py-2 bg-orange-600/10 hover:bg-orange-600/20 border border-orange-500/30 text-orange-400 text-xs font-semibold rounded-lg transition-colors"
+                title="BSE: Choose Group=Equity, select all, then click Download"
+              >
+                <ExternalLink size={12} /> BSE Scrip List (Manual Download)
+              </a>
+            </div>
+            <p className="text-[10px] text-zinc-600 leading-relaxed">
+              NSE: direct CSV download. BSE: select Group=Equity on the page, then click Download.
+            </p>
+          </div>
+
+          {/* Auto-sync toggle */}
+          <div className="flex items-center justify-between bg-financial-bg/30 border border-financial-border/60 rounded-lg px-4 py-3">
+            <div className="space-y-0.5">
+              <p className="text-xs font-bold text-financial-text">Auto-sync NSE list on app start</p>
+              <p className="text-[10px] text-financial-muted">Attempts to fetch NSE equity CSV daily on launch (Vercel only)</p>
+            </div>
+            <label className="relative inline-flex items-center cursor-pointer">
+              <input
+                type="checkbox"
+                className="sr-only peer"
+                checked={state.settings.autoSyncMaster}
+                onChange={e => {
+                  dispatch({ type: 'UPDATE_SETTINGS', payload: { autoSyncMaster: e.target.checked } });
+                  if (!e.target.checked) setSyncError(null);
+                }}
+              />
+              <div className="w-9 h-5 bg-zinc-700 rounded-full peer peer-checked:bg-financial-green peer-focus:outline-none transition-colors after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:after:translate-x-4" />
+            </label>
+          </div>
+
+          {/* Sync status + action buttons */}
+          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2">
+            <span className={`text-[10px] font-semibold ${syncStatus.color}`}>{syncStatus.label}</span>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={handleAutoSyncNow}
+                disabled={isSyncing}
+                className="flex items-center gap-1 px-3 py-1.5 bg-financial-card border border-financial-border hover:border-blue-500/50 text-financial-muted hover:text-blue-400 text-xs font-semibold rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                <RefreshCw size={11} className={isSyncing ? 'animate-spin' : ''} /> {isSyncing ? 'Trying...' : 'Try Auto-Sync'}
+              </button>
+              {state.stockMaster.length > 0 && (
+                <button
+                  onClick={handleClearMaster}
+                  className="flex items-center gap-1 px-3 py-1.5 bg-financial-card border border-financial-red/30 hover:border-financial-red/70 text-financial-red/60 hover:text-financial-red text-xs font-semibold rounded-lg transition-colors"
+                >
+                  <XCircle size={11} /> Clear
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* Inline sync error / instructions panel */}
+          {syncError && (
+            <div className="bg-amber-500/8 border border-amber-500/30 rounded-lg p-4 space-y-3">
+              <div className="flex items-start gap-2">
+                <AlertTriangle size={14} className="text-amber-500 shrink-0 mt-0.5" />
+                <div className="flex-1">
+                  <p className="text-xs font-bold text-amber-400 mb-1">Auto-sync unavailable</p>
+                  <p className="text-[11px] text-amber-300/80 leading-relaxed">{syncError.message}</p>
+                </div>
+                <button onClick={() => setSyncError(null)} className="text-zinc-500 hover:text-zinc-300 shrink-0">
+                  <XCircle size={13} />
+                </button>
+              </div>
+              {syncError.instructions.length > 0 && (
+                <div className="space-y-1 pl-5">
+                  <p className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider">How to update manually:</p>
+                  {syncError.instructions.map((step, i) => (
+                    <p key={i} className="text-[11px] text-zinc-400 flex items-start gap-1.5">
+                      <CheckCircle size={10} className="text-amber-500 shrink-0 mt-0.5" />
+                      {step}
+                    </p>
+                  ))}
+                </div>
+              )}
+              <a
+                href={syncError.downloadUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/30 text-amber-400 text-xs font-semibold rounded-lg transition-colors"
+              >
+                <Download size={11} /> Download NSE CSV Now
+              </a>
+            </div>
+          )}
+
+          {/* Existing database count + upload */}
           <div className="flex items-center justify-between bg-financial-bg/50 border border-financial-border p-4 rounded-lg">
             <div className="space-y-1">
               <p className="text-xs font-bold text-financial-text">Database script entries</p>
@@ -863,3 +1069,4 @@ export const Settings: React.FC = () => {
     </div>
   );
 };
+

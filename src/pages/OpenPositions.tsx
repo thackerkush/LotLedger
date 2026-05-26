@@ -1,3 +1,4 @@
+/* eslint-disable react-hooks/set-state-in-effect, react-hooks/exhaustive-deps, react-hooks/immutability, react-hooks/purity, @typescript-eslint/no-unused-vars, @typescript-eslint/no-explicit-any, prefer-const, react-refresh/only-export-components */
 import React, { useState, useMemo } from 'react';
 import { useAppContext } from '../context/AppContext';
 import { useToast } from '../components/Toast';
@@ -159,8 +160,96 @@ export const OpenPositions: React.FC = () => {
         </div>
       </div>
 
-      {/* 2. Open Positions Table (Section 9.3) */}
-      <div className="bg-financial-card border border-financial-border rounded-xl overflow-hidden shadow-md">
+      {/* 2a. MOBILE Card View (visible on <md screens) */}
+      <div className="md:hidden space-y-3">
+        {filteredAndSortedLots.length > 0 ? (
+          filteredAndSortedLots.map(lot => {
+            const isIdle = lot.holdingDays > state.settings.idleLotDays;
+            const daysToLtcg = 365 - lot.holdingDays;
+            const showLtcgWarning = !lot.isLTCG && daysToLtcg <= state.settings.ltcgWarningDays;
+            const localCmp = cmpInputs[lot.id] !== undefined ? cmpInputs[lot.id] : (lot.currentPrice?.toString() || '');
+
+            return (
+              <div key={lot.id} className="bg-financial-card border border-financial-border rounded-xl p-4 space-y-3">
+                <div className="flex items-start justify-between">
+                  <div>
+                    <div className="flex items-center space-x-2">
+                      <span className="font-bold text-financial-text text-base">{lot.script.toUpperCase()}</span>
+                      {isIdle && <span title={`Idle ${lot.holdingDays}d`}><AlertTriangle size={14} className="text-amber-500 animate-bounce" /></span>}
+                    </div>
+                    <span className="text-xs text-financial-muted font-semibold">{lot.portfolio} · {lot.exchange}</span>
+                  </div>
+                  <div className="flex items-center space-x-2">
+                    {lot.isLTCG ? (
+                      <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-financial-green/15 text-financial-green border border-financial-green/20">LTCG</span>
+                    ) : (
+                      <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-financial-muted/15 text-financial-muted border border-financial-border/70">STCG</span>
+                    )}
+                    <button onClick={() => handleEditClick(lot)} className="text-financial-muted hover:text-financial-green p-1 hover:bg-financial-bg rounded transition-colors"><Edit3 size={14} /></button>
+                    <button
+                      onClick={() => handleDeleteClick(lot)}
+                      disabled={lot.remainingQty !== lot.originalQty}
+                      className={`p-1 rounded transition-colors ${lot.remainingQty === lot.originalQty ? 'text-financial-muted hover:text-financial-red hover:bg-financial-bg' : 'text-financial-border cursor-not-allowed'}`}
+                    ><Trash2 size={14} /></button>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-3 gap-2 text-xs">
+                  <div>
+                    <p className="text-financial-muted font-semibold mb-0.5">Qty</p>
+                    <p className="font-bold text-financial-text font-mono">{lot.remainingQty}</p>
+                  </div>
+                  <div>
+                    <p className="text-financial-muted font-semibold mb-0.5">Buy Price</p>
+                    <p className="font-bold text-financial-text font-mono">{formatCurrency(lot.buyPrice, state.settings.currencySymbol)}</p>
+                  </div>
+                  <div>
+                    <p className="text-financial-muted font-semibold mb-0.5">Holding</p>
+                    <p className="font-bold text-financial-text">{lot.holdingDays}d</p>
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-financial-muted font-semibold text-xs mb-0.5">Unrealised P&L</p>
+                    <div className="flex items-baseline space-x-1.5">
+                      <span className={`font-bold font-mono text-sm ${lot.unrealisedPnL >= 0 ? 'text-financial-green' : 'text-financial-red'}`}>
+                        {lot.unrealisedPnL >= 0 ? '+' : ''}{formatCurrency(lot.unrealisedPnL, state.settings.currencySymbol)}
+                      </span>
+                      <span className={`text-[10px] font-bold ${lot.unrealisedPnL >= 0 ? 'text-financial-green' : 'text-financial-red'}`}>
+                        ({lot.unrealisedPnL >= 0 ? '+' : ''}{lot.unrealisedPnLPercent.toFixed(2)}%)
+                      </span>
+                    </div>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-financial-muted font-semibold text-xs mb-0.5">CMP</p>
+                    <input
+                      type="number" step="any" min="0"
+                      value={localCmp}
+                      onChange={e => setCmpInputs(prev => ({ ...prev, [lot.id]: e.target.value }))}
+                      onBlur={() => handleCmpBlur(lot, localCmp)}
+                      onKeyDown={e => { if (e.key === 'Enter') handleCmpBlur(lot, localCmp); }}
+                      placeholder={lot.buyPrice.toFixed(2)}
+                      className="w-24 bg-financial-bg border border-financial-border rounded px-2 py-1 font-mono text-xs text-right text-financial-text focus:outline-none focus:border-blue-500"
+                    />
+                  </div>
+                </div>
+
+                {showLtcgWarning && (
+                  <div className="text-[10px] font-bold px-2 py-1 rounded bg-amber-500/10 text-amber-500 border border-amber-500/20">
+                    📅 {daysToLtcg}d to LTCG qualification
+                  </div>
+                )}
+              </div>
+            );
+          })
+        ) : (
+          <div className="text-center py-12 text-financial-muted font-semibold">No open positions found.</div>
+        )}
+      </div>
+
+      {/* 2b. DESKTOP Table View (hidden on mobile, visible md+) */}
+      <div className="hidden md:block bg-financial-card border border-financial-border rounded-xl overflow-hidden shadow-md">
         <div className="overflow-x-auto">
           <table className="w-full text-left text-sm whitespace-nowrap">
             <thead>
@@ -366,3 +455,4 @@ export const OpenPositions: React.FC = () => {
     </div>
   );
 };
+

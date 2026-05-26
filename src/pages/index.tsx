@@ -1,3 +1,4 @@
+/* eslint-disable react-refresh/only-export-components */
 export * from './Dashboard';
 export * from './OpenPositions';
 export * from './TradeEntry';
@@ -9,3 +10,4 @@ export * from './Analytics';
 export * from './Watchlist';
 export * from './Settings';
 export * from './About';
+

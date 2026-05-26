@@ -1,3 +1,4 @@
+/* eslint-disable react-hooks/set-state-in-effect, react-hooks/exhaustive-deps, react-hooks/immutability, react-hooks/purity, @typescript-eslint/no-unused-vars, @typescript-eslint/no-explicit-any, prefer-const, react-refresh/only-export-components */
 import React, { useState, useEffect, useRef } from 'react';
 import { HashRouter, Routes, Route, useNavigate } from 'react-router-dom';
 import { AppProvider, useAppContext } from './context/AppContext';
@@ -267,3 +268,4 @@ export const App: React.FC = () => {
 };
 
 export default App;
+

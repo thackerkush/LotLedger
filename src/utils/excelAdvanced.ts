@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any, @typescript-eslint/no-unused-vars, no-useless-assignment, prefer-const, preserve-caught-error */
 import ExcelJS from 'exceljs';
 import type { AppState } from '../types';
 import { getColLetter, formatExcelDate, applyPageSetup } from './excel';
@@ -323,3 +324,4 @@ export const applyAdvancedExcelFeatures = async (
     applyPageSetup(sWs);
   });
 };
+

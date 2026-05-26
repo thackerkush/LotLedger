@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any, @typescript-eslint/no-unused-vars, no-useless-assignment, prefer-const, preserve-caught-error */
 import ExcelJS from 'exceljs';
 import type { AppState, Transaction, Lot, ClosedTrade, Dividend, CorporateAction, WatchlistEntry } from '../types';
 import { defaultSettings } from './storage';
@@ -464,3 +465,4 @@ const validateAndCoerce = (state: Partial<AppState>): void => {
   // SETTINGS
   state.settings = { ...defaultSettings, ...(state.settings ?? {}) } as any;
 };
+

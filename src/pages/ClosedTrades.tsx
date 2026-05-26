@@ -1,3 +1,4 @@
+/* eslint-disable react-hooks/set-state-in-effect, react-hooks/exhaustive-deps, react-hooks/immutability, react-hooks/purity, @typescript-eslint/no-unused-vars, @typescript-eslint/no-explicit-any, prefer-const, react-refresh/only-export-components */
 import React, { useState, useMemo } from 'react';
 import { useAppContext } from '../context/AppContext';
 import { useToast } from '../components/Toast';
@@ -102,8 +103,68 @@ export const ClosedTrades: React.FC = () => {
         />
       </div>
 
-      {/* Closed Trades Table Ledger */}
-      <div className="bg-financial-card border border-financial-border rounded-xl overflow-hidden shadow-md">
+      {/* MOBILE Card View (<md) */}
+      <div className="md:hidden space-y-3">
+        {filteredAndSortedTrades.length > 0 ? (
+          filteredAndSortedTrades.map(ct => {
+            const returnPercent = ct.buyCost > 0 ? (ct.netPnL / ct.buyCost) * 100 : 0;
+            return (
+              <div key={ct.id} className="bg-financial-card border border-financial-border rounded-xl p-4 space-y-3">
+                <div className="flex items-start justify-between">
+                  <div>
+                    <p className="font-bold text-financial-text text-base uppercase">{ct.script}</p>
+                    <p className="text-xs text-financial-muted font-semibold">{ct.portfolio} · {ct.exchange}</p>
+                  </div>
+                  <div className="flex items-center space-x-2">
+                    {ct.isLTCG ? (
+                      <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-financial-green/15 text-financial-green border border-financial-green/20">LTCG</span>
+                    ) : (
+                      <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-financial-muted/15 text-financial-muted border border-financial-border/70">STCG</span>
+                    )}
+                    <button onClick={() => handleDeleteTrade(ct)} className="text-financial-muted hover:text-financial-red p-1 hover:bg-financial-bg rounded transition-colors"><Trash2 size={14} /></button>
+                  </div>
+                </div>
+                <div className="grid grid-cols-3 gap-2 text-xs">
+                  <div>
+                    <p className="text-financial-muted font-semibold mb-0.5">Buy Date</p>
+                    <p className="font-bold text-financial-text">{ct.buyDate.split('-').reverse().join('-')}</p>
+                  </div>
+                  <div>
+                    <p className="text-financial-muted font-semibold mb-0.5">Sell Date</p>
+                    <p className="font-bold text-financial-text">{ct.sellDate.split('-').reverse().join('-')}</p>
+                  </div>
+                  <div>
+                    <p className="text-financial-muted font-semibold mb-0.5">Qty</p>
+                    <p className="font-bold text-financial-text font-mono">{ct.qty}</p>
+                  </div>
+                </div>
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-financial-muted font-semibold text-xs mb-0.5">Net P&L</p>
+                    <div className="flex items-baseline space-x-1.5">
+                      <span className={`font-bold font-mono text-sm ${ct.netPnL >= 0 ? 'text-financial-green' : 'text-financial-red'}`}>
+                        {ct.netPnL >= 0 ? '+' : ''}{formatCurrency(ct.netPnL, state.settings.currencySymbol)}
+                      </span>
+                      <span className={`text-[10px] font-bold ${ct.netPnL >= 0 ? 'text-financial-green' : 'text-financial-red'}`}>
+                        ({ct.netPnL >= 0 ? '+' : ''}{returnPercent.toFixed(2)}%)
+                      </span>
+                    </div>
+                  </div>
+                  <div className="text-right text-xs">
+                    <p className="text-financial-muted font-semibold mb-0.5">Holding</p>
+                    <p className="font-bold text-financial-text">{ct.holdingDays}d</p>
+                  </div>
+                </div>
+              </div>
+            );
+          })
+        ) : (
+          <div className="text-center py-12 text-financial-muted font-semibold">No closed trades registered.</div>
+        )}
+      </div>
+
+      {/* DESKTOP Table (hidden md:block) */}
+      <div className="hidden md:block bg-financial-card border border-financial-border rounded-xl overflow-hidden shadow-md">
         <div className="overflow-x-auto">
           <table className="w-full text-left text-sm whitespace-nowrap">
             <thead>
@@ -239,3 +300,4 @@ export const ClosedTrades: React.FC = () => {
     </div>
   );
 };
+

@@ -1,16 +1,20 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { useLocation } from 'react-router-dom';
-import { ChevronDown, Plus, Trash2, Shield, User } from 'lucide-react';
+import { ChevronDown, Plus, Trash2, Shield, User, Menu } from 'lucide-react';
 import { useAppContext } from '../context/AppContext';
 import { useConfirm } from './ConfirmDialog';
 import { useToast } from './Toast';
 
-export const Header: React.FC = () => {
+interface HeaderProps {
+  onMenuClick: () => void;
+}
+
+export const Header: React.FC<HeaderProps> = ({ onMenuClick }) => {
   const location = useLocation();
   const { state, dispatch } = useAppContext();
   const { showConfirm } = useConfirm();
   const { showToast } = useToast();
-  
+
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
 
@@ -52,7 +56,7 @@ export const Header: React.FC = () => {
   const handleDeleteProfile = async (e: React.MouseEvent) => {
     e.stopPropagation();
     setIsDropdownOpen(false);
-    
+
     if (state.activeProfile === 'Default') {
       showToast('Cannot delete the Default profile', 'error');
       return;
@@ -87,20 +91,33 @@ export const Header: React.FC = () => {
   };
 
   return (
-    <header className="h-16 bg-zinc-950/80 backdrop-blur-md border-b border-zinc-900/60 fixed top-0 right-0 left-64 z-30 flex items-center justify-between px-6 select-none">
-      <h2 className="text-base font-bold font-outfit text-zinc-100 tracking-tight">
-        {getPageTitle()}
-      </h2>
+    <header className="h-16 bg-zinc-950/80 backdrop-blur-md border-b border-zinc-900/60 fixed top-0 right-0 left-0 md:left-64 z-30 flex items-center justify-between px-4 md:px-6 select-none">
+      {/* Left side: hamburger (mobile) + page title */}
+      <div className="flex items-center space-x-3">
+        {/* Hamburger menu — mobile only */}
+        <button
+          onClick={onMenuClick}
+          className="md:hidden p-2 text-zinc-400 hover:text-zinc-100 hover:bg-zinc-900 rounded-lg transition-colors min-h-[40px] min-w-[40px] flex items-center justify-center"
+          aria-label="Open navigation menu"
+        >
+          <Menu size={20} />
+        </button>
 
+        <h2 className="text-base font-bold font-outfit text-zinc-100 tracking-tight">
+          {getPageTitle()}
+        </h2>
+      </div>
+
+      {/* Right side: profile dropdown */}
       <div className="relative" ref={dropdownRef}>
         <button
           onClick={() => setIsDropdownOpen(!isDropdownOpen)}
-          className="flex items-center space-x-2 px-3 py-1.5 bg-zinc-900 border border-zinc-800/80 rounded-lg text-zinc-300 hover:bg-zinc-850 hover:text-zinc-100 transition-all cursor-pointer shadow-sm text-xs font-semibold"
+          className="flex items-center space-x-2 px-3 py-1.5 bg-zinc-900 border border-zinc-800/80 rounded-lg text-zinc-300 hover:bg-zinc-800 hover:text-zinc-100 transition-all cursor-pointer shadow-sm text-xs font-semibold min-h-[36px]"
         >
-          <User size={13} className="text-zinc-500" />
-          <span>{state.activeProfile}</span>
-          {state.settings.profilePasswordHash && <Shield size={11} className="text-emerald-500" />}
-          <ChevronDown size={12} className="text-zinc-500" />
+          <User size={13} className="text-zinc-500 shrink-0" />
+          <span className="max-w-[80px] truncate">{state.activeProfile}</span>
+          {state.settings.profilePasswordHash && <Shield size={11} className="text-emerald-500 shrink-0" />}
+          <ChevronDown size={12} className="text-zinc-500 shrink-0" />
         </button>
 
         {isDropdownOpen && (
@@ -108,34 +125,34 @@ export const Header: React.FC = () => {
             <div className="px-3 py-1.5 border-b border-zinc-800/60">
               <p className="text-[9px] text-zinc-500 uppercase font-bold tracking-wider">Profiles</p>
             </div>
-            
+
             <div className="max-h-48 overflow-y-auto py-1 scrollbar-thin">
               {state.profiles.map((profile) => (
                 <button
                   key={profile}
                   onClick={() => handleProfileSwitch(profile)}
-                  className={`w-full text-left px-3 py-1.5 text-xs flex items-center justify-between hover:bg-zinc-800 transition-colors ${
+                  className={`w-full text-left px-3 py-1.5 text-xs flex items-center justify-between hover:bg-zinc-800 transition-colors min-h-[36px] ${
                     profile === state.activeProfile ? 'text-emerald-400 font-bold bg-emerald-500/5' : 'text-zinc-300'
                   }`}
                 >
                   <span>{profile}</span>
-                  {profile === state.activeProfile && <div className="w-1 h-1 rounded-full bg-emerald-400 shadow-[0_0_6px_#10b981]"></div>}
+                  {profile === state.activeProfile && <div className="w-1 h-1 rounded-full bg-emerald-400 shadow-[0_0_6px_#10b981]" />}
                 </button>
               ))}
             </div>
-            
+
             <div className="border-t border-zinc-800/60 mt-1 pt-1">
               <button
                 onClick={handleNewProfile}
-                className="w-full text-left px-3 py-1.5 text-xs font-semibold text-zinc-300 hover:bg-zinc-850 transition-colors flex items-center"
+                className="w-full text-left px-3 py-1.5 text-xs font-semibold text-zinc-300 hover:bg-zinc-800 transition-colors flex items-center min-h-[36px]"
               >
                 <Plus size={12} className="mr-1.5 text-emerald-400" /> New Profile
               </button>
-              
+
               {state.activeProfile !== 'Default' && (
                 <button
                   onClick={handleDeleteProfile}
-                  className="w-full text-left px-3 py-1.5 text-xs font-semibold text-rose-400 hover:bg-zinc-850 transition-colors flex items-center"
+                  className="w-full text-left px-3 py-1.5 text-xs font-semibold text-rose-400 hover:bg-zinc-800 transition-colors flex items-center min-h-[36px]"
                 >
                   <Trash2 size={12} className="mr-1.5 text-rose-400" /> Delete Profile
                 </button>

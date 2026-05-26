@@ -268,10 +268,10 @@ export const Dividends: React.FC = () => {
                   <tr className="border-b border-financial-border text-financial-muted bg-financial-bg/30 text-xs uppercase font-bold tracking-wider">
                     <th className="py-3 px-5 font-semibold">Date</th>
                     <th className="py-3 px-4 font-semibold">Script</th>
-                    <th className="py-3 px-4 font-semibold text-right">Shares</th>
-                    <th className="py-3 px-4 font-semibold text-right">Div/Share</th>
-                    <th className="py-3 px-4 font-semibold text-right">Gross Amount</th>
-                    <th className="py-3 px-4 font-semibold text-right">TDS</th>
+                    <th className="py-3 px-4 font-semibold text-right hidden md:table-cell">Shares</th>
+                    <th className="py-3 px-4 font-semibold text-right hidden md:table-cell">Div/Share</th>
+                    <th className="py-3 px-4 font-semibold text-right hidden md:table-cell">Gross Amount</th>
+                    <th className="py-3 px-4 font-semibold text-right hidden md:table-cell">TDS</th>
                     <th className="py-3 px-4 font-semibold text-right">Net Payout</th>
                     <th className="py-3 px-5 text-right font-semibold">Actions</th>
                   </tr>
@@ -300,7 +300,7 @@ export const Dividends: React.FC = () => {
                                 className="bg-financial-card border border-financial-border rounded px-2 py-0.5 text-xs text-financial-text uppercase w-16"
                               />
                             </td>
-                            <td className="py-2.5 px-3 text-right">
+                            <td className="py-2.5 px-3 text-right hidden md:table-cell">
                               <input
                                 type="number"
                                 value={editQty}
@@ -308,7 +308,7 @@ export const Dividends: React.FC = () => {
                                 className="bg-financial-card border border-financial-border rounded px-2 py-0.5 text-xs text-right text-financial-text w-16"
                               />
                             </td>
-                            <td className="py-2.5 px-3 text-right">
+                            <td className="py-2.5 px-3 text-right hidden md:table-cell">
                               <input
                                 type="number"
                                 step="any"
@@ -317,10 +317,10 @@ export const Dividends: React.FC = () => {
                                 className="bg-financial-card border border-financial-border rounded px-2 py-0.5 text-xs text-right text-financial-text w-16 font-mono"
                               />
                             </td>
-                            <td className="py-2.5 px-3 text-right font-mono text-financial-muted">
+                            <td className="py-2.5 px-3 text-right font-mono text-financial-muted hidden md:table-cell">
                               ₹{(editQty * editDivPerShare).toFixed(2)}
                             </td>
-                            <td className="py-2.5 px-3 text-right">
+                            <td className="py-2.5 px-3 text-right hidden md:table-cell">
                               <input
                                 type="number"
                                 step="any"
@@ -354,22 +354,14 @@ export const Dividends: React.FC = () => {
 
                       return (
                         <tr key={d.id} className="hover:bg-financial-bg/40 transition-colors">
-                          <td className="py-3 px-5 text-financial-text">{d.date.split('-').reverse().join('-')}</td>
-                          <td className="py-3 px-4 font-bold text-financial-text uppercase">{d.script}</td>
-                          <td className="py-3 px-4 font-mono text-right text-financial-text">{d.qty}</td>
-                          <td className="py-3 px-4 font-mono text-right text-financial-text">
-                            {formatCurrency(d.dividendPerShare, state.settings.currencySymbol)}
-                          </td>
-                          <td className="py-3 px-4 font-mono text-right text-financial-text">
-                            {formatCurrency(d.totalAmount, state.settings.currencySymbol)}
-                          </td>
-                          <td className="py-3 px-4 font-mono text-right text-financial-red">
-                            {d.tds > 0 ? `-${formatCurrency(d.tds, state.settings.currencySymbol)}` : '-'}
-                          </td>
-                          <td className="py-3 px-4 font-mono text-right text-financial-green">
-                            {formatCurrency(d.totalAmount - d.tds, state.settings.currencySymbol)}
-                          </td>
-                          <td className="py-3 px-5 text-right">
+                            <td className="py-3 px-5 text-financial-muted">{d.date.split('-').reverse().join('-')}</td>
+                            <td className="py-3 px-4 font-bold text-financial-text uppercase">{d.script}</td>
+                            <td className="py-3 px-4 text-right text-financial-text hidden md:table-cell">{d.qty}</td>
+                            <td className="py-3 px-4 text-right font-mono text-financial-text hidden md:table-cell">{formatCurrency(d.dividendPerShare, state.settings.currencySymbol)}</td>
+                            <td className="py-3 px-4 text-right font-mono text-financial-muted hidden md:table-cell">{formatCurrency(d.totalAmount, state.settings.currencySymbol)}</td>
+                            <td className="py-3 px-4 text-right font-mono text-financial-text hidden md:table-cell">{d.tds > 0 ? `-${formatCurrency(d.tds, state.settings.currencySymbol)}` : '-'}</td>
+                            <td className="py-3 px-4 text-right font-bold font-mono text-financial-green">{formatCurrency(d.totalAmount - d.tds, state.settings.currencySymbol)}</td>
+                            <td className="py-3 px-5 text-right">
                             <div className="flex items-center justify-end space-x-2">
                               <button
                                 onClick={() => handleEditClick(d)}
