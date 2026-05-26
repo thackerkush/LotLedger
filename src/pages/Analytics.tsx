@@ -2,6 +2,7 @@
 import React, { useState, useMemo } from 'react';
 import { useAppContext } from '../context/AppContext';
 import { formatCurrency, getFinancialYearStart } from '../utils/calculations';
+import { ErrorBoundary } from '../components/ErrorBoundary';
 import {
   BarChart,
   Bar,
@@ -284,23 +285,25 @@ export const Analytics: React.FC = () => {
           </h4>
           <div className="h-48 md:h-64 flex items-center justify-center">
             {monthlyPnLData.length > 0 ? (
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={monthlyPnLData}>
-                  <XAxis dataKey="name" stroke="#71717a" fontSize={10} tickLine={false} />
-                  <YAxis stroke="#71717a" fontSize={10} width={55} />
-                  <Tooltip
-                    contentStyle={{ backgroundColor: '#09090b', border: '1px solid #27272a', borderRadius: '8px' }}
-                    itemStyle={{ color: '#f4f4f5' }}
-                    labelStyle={{ color: '#71717a', fontWeight: 'bold' }}
-                    formatter={(val: unknown) => [formatCurrency(Number(val), state.settings.currencySymbol), 'Realised Net P&L']}
-                  />
-                  <Bar dataKey="value" radius={[4, 4, 0, 0]}>
-                    {monthlyPnLData.map((entry, idx) => (
-                      <Cell key={`cell-${idx}`} fill={entry.value >= 0 ? '#16a34a' : '#dc2626'} />
-                    ))}
-                  </Bar>
-                </BarChart>
-              </ResponsiveContainer>
+              <ErrorBoundary fallbackText="Failed to render monthly P&L chart.">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={monthlyPnLData}>
+                    <XAxis dataKey="name" stroke="#71717a" fontSize={10} tickLine={false} />
+                    <YAxis stroke="#71717a" fontSize={10} width={55} />
+                    <Tooltip
+                      contentStyle={{ backgroundColor: '#09090b', border: '1px solid #27272a', borderRadius: '8px' }}
+                      itemStyle={{ color: '#f4f4f5' }}
+                      labelStyle={{ color: '#71717a', fontWeight: 'bold' }}
+                      formatter={(val: unknown) => [formatCurrency(Number(val), state.settings.currencySymbol), 'Realised Net P&L']}
+                    />
+                    <Bar dataKey="value" radius={[4, 4, 0, 0]}>
+                      {monthlyPnLData.map((entry, idx) => (
+                        <Cell key={`cell-${idx}`} fill={entry.value >= 0 ? '#16a34a' : '#dc2626'} />
+                      ))}
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+              </ErrorBoundary>
             ) : (
               <p className="text-sm text-financial-muted">No monthly trading records logged.</p>
             )}
@@ -314,19 +317,21 @@ export const Analytics: React.FC = () => {
           </h4>
           <div className="h-48 md:h-64 flex items-center justify-center">
             {fyClosedTrades.length > 0 ? (
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={holdingPeriodData} layout="vertical">
-                  <XAxis type="number" stroke="#71717a" fontSize={10} />
-                  <YAxis dataKey="name" type="category" stroke="#71717a" fontSize={10} tickLine={false} width={65} />
-                  <Tooltip
-                    contentStyle={{ backgroundColor: '#09090b', border: '1px solid #27272a', borderRadius: '8px' }}
-                    itemStyle={{ color: '#f4f4f5' }}
-                    labelStyle={{ color: '#71717a', fontWeight: 'bold' }}
-                    formatter={(val: unknown) => [`${val} trades`, 'Trade Count']}
-                  />
-                  <Bar dataKey="count" fill="#3B82F6" radius={[0, 4, 4, 0]} />
-                </BarChart>
-              </ResponsiveContainer>
+              <ErrorBoundary fallbackText="Failed to render holding period distribution chart.">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={holdingPeriodData} layout="vertical">
+                    <XAxis type="number" stroke="#71717a" fontSize={10} />
+                    <YAxis dataKey="name" type="category" stroke="#71717a" fontSize={10} tickLine={false} width={65} />
+                    <Tooltip
+                      contentStyle={{ backgroundColor: '#09090b', border: '1px solid #27272a', borderRadius: '8px' }}
+                      itemStyle={{ color: '#f4f4f5' }}
+                      labelStyle={{ color: '#71717a', fontWeight: 'bold' }}
+                      formatter={(val: unknown) => [`${val} trades`, 'Trade Count']}
+                    />
+                    <Bar dataKey="count" fill="#3B82F6" radius={[0, 4, 4, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </ErrorBoundary>
             ) : (
               <p className="text-sm text-financial-muted">No closed trade histories to aggregate.</p>
             )}

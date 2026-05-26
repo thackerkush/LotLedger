@@ -161,7 +161,7 @@ const AppShell: React.FC = () => {
       if (entry.targetPrice === null) return;
       
       // Find current price of this script from open lots
-      const activeLot = state.lots.find(l => l.script === entry.script && l.currentPrice !== undefined);
+      const activeLot = state.lots.find(l => l.script === entry.script && l.remainingQty > 0 && l.currentPrice !== undefined);
       if (!activeLot || !activeLot.currentPrice) return;
 
       const isTargetMet = activeLot.currentPrice >= entry.targetPrice;
@@ -176,7 +176,8 @@ const AppShell: React.FC = () => {
   }, [state.watchlist, state.lots, isLocked, showSplash, showToast]);
 
   // Splash Screen Overlay Rendering
-  if (showSplash) {
+  const { isDbLoading } = useAppContext();
+  if (showSplash || isDbLoading) {
     return (
       <div className="fixed inset-0 z-50 bg-[#0f172a] flex flex-col items-center justify-center space-y-6">
         <div className="p-4 bg-financial-green/10 border border-financial-green/20 rounded-full text-financial-green animate-pulse">

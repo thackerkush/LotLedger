@@ -35,7 +35,7 @@ export const Watchlist: React.FC = () => {
     }
 
     const newWatch: WatchlistEntry = {
-      id: `WL_${Date.now()}`,
+      id: `WL_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`,
       script: scriptUpper,
       targetPrice: targetPrice !== '' ? Number(targetPrice) : null,
       notes

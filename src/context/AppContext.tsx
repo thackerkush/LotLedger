@@ -1,14 +1,17 @@
-/* eslint-disable react-hooks/set-state-in-effect, react-hooks/exhaustive-deps, react-hooks/immutability, react-hooks/purity, @typescript-eslint/no-unused-vars, @typescript-eslint/no-explicit-any, prefer-const, react-refresh/only-export-components */
-import React, { createContext, useContext, useReducer, useEffect } from 'react';
+import React, { createContext, useContext, useReducer, useEffect, useState } from 'react';
 import type { AppState, Action, Lot } from '../types';
-import { loadState, saveState, defaultState, getProfileKey } from '../utils/storage';
+import { defaultState, getProfileKey } from '../utils/storage';
+import { loadStateAsync, saveStateAsync, setDBValue, deleteDBValue, getDBValue } from '../utils/indexedDB';
+import Papa from 'papaparse';
 
 const AppContext = createContext<{
   state: AppState;
   dispatch: React.Dispatch<Action>;
+  isDbLoading: boolean;
 }>({
   state: defaultState,
   dispatch: () => null,
+  isDbLoading: true,
 });
 
 const applyCorporateActionLogic = (state: AppState, actionId: string): AppState => {
@@ -63,7 +66,7 @@ const applyCorporateActionLogic = (state: AppState, actionId: string): AppState 
         if (ca.childSymbol && ca.childCostPercent !== undefined) {
           newLots.push({
             ...lot,
-            id: `LOT_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+            id: `LOT_${Date.now()}_${Math.random().toString(36).substring(2, 11)}`,
             script: ca.childSymbol,
             buyPrice: (lot.buyPrice * childPercent) / ratioMultiplier,
             originalQty: lot.originalQty * ratioMultiplier,
@@ -217,7 +220,6 @@ const appReducer = (state: AppState, action: Action): AppState => {
 
     case 'DELETE_PROFILE': {
       if (action.payload === 'Default') return state;
-      localStorage.removeItem(getProfileKey(action.payload));
       const newProfiles = state.profiles.filter((p) => p !== action.payload);
       const newActiveProfile = state.activeProfile === action.payload ? 'Default' : state.activeProfile;
       return { ...state, profiles: newProfiles, activeProfile: newActiveProfile };
@@ -240,26 +242,39 @@ const appReducer = (state: AppState, action: Action): AppState => {
 
 export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [state, dispatch] = useReducer(appReducer, defaultState);
+  const [isDbLoading, setIsDbLoading] = useState(true);
 
-  // Wrap dispatch to intercept SWITCH_PROFILE and ADD_PROFILE with duplicate logic
+  // Wrap dispatch to intercept SWITCH_PROFILE, ADD_PROFILE, and DELETE_PROFILE with async DB operations
   const enhancedDispatch = (action: Action) => {
     if (action.type === 'SWITCH_PROFILE') {
-      const newState = loadState(action.payload);
-      dispatch({ type: 'SET_STATE', payload: newState });
+      setIsDbLoading(true);
+      (async () => {
+        try {
+          const newState = await loadStateAsync(action.payload);
+          dispatch({ type: 'SET_STATE', payload: newState });
+        } catch (err) {
+          console.error('[LotLedger] Failed to switch profile:', err);
+        } finally {
+          setIsDbLoading(false);
+        }
+      })();
     } else if (action.type === 'ADD_PROFILE') {
       const newName = action.payload;
       if (!state.profiles.includes(newName)) {
-        // Just create the key in localStorage with default data (inherited default settings)
         const newProfileState = {
-          ...defaultState,
-          settings: { ...state.settings }, // inherit settings
-          activeProfile: newName,
-          profiles: [...state.profiles, newName],
-        };
-        localStorage.setItem(getProfileKey(newName), JSON.stringify({
           transactions: [], lots: [], closedTrades: [], dividends: [],
-          corporateActions: [], settings: newProfileState.settings, watchlist: []
-        }));
+          corporateActions: [], settings: { ...state.settings }, watchlist: []
+        };
+        setDBValue(getProfileKey(newName), newProfileState).catch(err => {
+          console.error('[LotLedger] Failed to pre-save new profile:', err);
+        });
+      }
+      dispatch(action);
+    } else if (action.type === 'DELETE_PROFILE') {
+      if (action.payload !== 'Default') {
+        deleteDBValue(getProfileKey(action.payload)).catch(err => {
+          console.error('[LotLedger] Failed to delete profile from IndexedDB:', err);
+        });
       }
       dispatch(action);
     } else {
@@ -268,30 +283,41 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   useEffect(() => {
-    const loadedState = loadState();
-    dispatch({ type: 'SET_STATE', payload: loadedState });
+    (async () => {
+      try {
+        const loadedState = await loadStateAsync();
+        dispatch({ type: 'SET_STATE', payload: loadedState });
+      } catch (err) {
+        console.error('[LotLedger] Error during database startup:', err);
+      } finally {
+        setIsDbLoading(false);
+      }
+    })();
   }, []);
 
   useEffect(() => {
-    saveState(state);
-  }, [state]);
+    if (isDbLoading) return;
+    saveStateAsync(state);
+  }, [state, isDbLoading]);
 
   // Auto-sync NSE master if setting is enabled and it has been 24+ hours
   useEffect(() => {
-    if (!state.settings.autoSyncMaster) return;
-    const lastSync = localStorage.getItem('lotledger_last_master_sync');
-    const hoursSinceLast = lastSync
-      ? (Date.now() - parseInt(lastSync)) / 3600000
-      : Infinity;
-    if (hoursSinceLast < 24) return;
+    if (isDbLoading || !state.settings.autoSyncMaster) return;
 
-    // Async fetch — do not block render
     (async () => {
       try {
+        const lastSync = await getDBValue<string>('lotledger_last_master_sync');
+        const hoursSinceLast = lastSync
+          ? (Date.now() - parseInt(lastSync)) / 3600000
+          : Infinity;
+        if (hoursSinceLast < 24) return;
+
         const res = await fetch('/api/nse-proxy');
         if (!res.ok) return;
         const csvText = await res.text();
-        const rows = csvText.split('\n').map((row: string) => row.trim().split(','));
+        const parsed = Papa.parse<string[]>(csvText, { skipEmptyLines: true });
+        const rows = parsed.data;
+        if (rows.length === 0) return;
         const headers = rows[0]?.map((h: string) => h.replace(/"/g, '').trim().toUpperCase()) || [];
         const isNSE = headers.includes('SYMBOL') && headers.includes('NAME OF COMPANY');
         if (!isNSE) return;
@@ -313,27 +339,24 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         const seen = new Set(masterList.map((s: { symbol: string }) => s.symbol.toUpperCase()));
         const merged = [
           ...masterList,
-          ...JSON.parse(localStorage.getItem('lotledger_master_db') || '[]').filter(
+          ...state.stockMaster.filter(
             (s: { symbol: string }) => !seen.has(s.symbol.toUpperCase())
           ),
         ];
         dispatch({ type: 'SET_STOCK_MASTER', payload: merged });
-        localStorage.setItem('lotledger_last_master_sync', Date.now().toString());
+        await setDBValue('lotledger_last_master_sync', Date.now().toString());
         console.info('[LotLedger] NSE auto-sync complete:', masterList.length, 'symbols');
-      } catch {
-        // Silent fail — auto-sync is best-effort
-        console.warn('[LotLedger] NSE auto-sync failed (CORS/network). Use Settings to sync manually.');
+      } catch (err) {
+        console.warn('[LotLedger] NSE auto-sync failed:', err);
       }
     })();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [state.settings.autoSyncMaster]);
+  }, [state.settings.autoSyncMaster, isDbLoading]);
 
   return (
-    <AppContext.Provider value={{ state, dispatch: enhancedDispatch }}>
+    <AppContext.Provider value={{ state, dispatch: enhancedDispatch, isDbLoading }}>
       {children}
     </AppContext.Provider>
   );
 };
 
 export const useAppContext = () => useContext(AppContext);
-

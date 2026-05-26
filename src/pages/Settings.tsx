@@ -6,6 +6,7 @@ import { useConfirm } from '../components/ConfirmDialog';
 import { exportToExcel } from '../utils/excel';
 import { importFromExcel } from '../utils/import';
 import { processCSVImport } from '../utils/csvImport';
+import Papa from 'papaparse';
 import type { Settings as SettingsType, StockMaster } from '../types';
 import {
   Upload,
@@ -221,7 +222,16 @@ export const Settings: React.FC = () => {
       }
 
       const csvText = await res.text();
-      const rows = csvText.split('\n').map(row => row.trim().split(','));
+      const parsed = Papa.parse<string[]>(csvText, { skipEmptyLines: true });
+      const rows = parsed.data;
+      if (rows.length === 0) {
+        setSyncError({
+          message: 'Received empty response from the sync proxy.',
+          downloadUrl: 'https://nsearchives.nseindia.com/content/equities/EQUITY_L.csv',
+          instructions: ['Download the CSV manually and upload it using the Upload button below.'],
+        });
+        return;
+      }
       const headers = rows[0]?.map(h => h.replace(/"/g, '').trim().toUpperCase()) || [];
       const isNSE = headers.includes('SYMBOL') && headers.includes('NAME OF COMPANY');
       if (!isNSE) {

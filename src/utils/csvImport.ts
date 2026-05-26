@@ -40,7 +40,7 @@ export const processCSVImport = (
           const q = Number(row.Quantity);
           const p = Number(row.Price);
           const scriptUpper = String(row.Script).trim().toUpperCase();
-          const timestamp = Date.now() + Math.random(); // Unique ID base
+          const timestamp = `${Date.now()}_${Math.random().toString(36).substring(2, 9)}`; // Unique ID base
           const txnId = `TXN_${timestamp}`;
 
           if (row.Type.toUpperCase() === 'BUY') {
@@ -124,7 +124,7 @@ export const processCSVImport = (
               const isLTCG = holdingDays >= 365;
 
               const ct: ClosedTrade = {
-                id: `CT_${Date.now() + Math.random()}`,
+                id: `CT_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`,
                 sellTransactionId: txnId,
                 buyLotId: lot.id,
                 script: scriptUpper,
@@ -147,8 +147,7 @@ export const processCSVImport = (
           }
         }
 
-        // Filter out fully depleted lots
-        currentLots = currentLots.filter(l => l.remainingQty > 0);
+        // Keep depleted lots to preserve historical references for closed trades
         
         onComplete(transactions, currentLots, closedTrades);
       } catch (err: any) {

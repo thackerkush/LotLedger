@@ -2,6 +2,7 @@
 import React, { useMemo, useState } from 'react';
 import { useAppContext } from '../context/AppContext';
 import { formatCurrency, calculateXIRR, calculateMaxDrawdown } from '../utils/calculations';
+import { ErrorBoundary } from '../components/ErrorBoundary';
 import type { CashFlow } from '../utils/calculations';
 import {
   PieChart,
@@ -363,30 +364,32 @@ export const Dashboard: React.FC = () => {
           </h4>
           <div className="h-48 md:h-64 flex items-center justify-center">
             {scriptAllocationData.length > 0 ? (
-              <ResponsiveContainer width="100%" height="100%">
-                <PieChart>
-                  <Pie
-                    data={scriptAllocationData}
-                    cx="50%"
-                    cy="50%"
-                    innerRadius={55}
-                    outerRadius={80}
-                    paddingAngle={3}
-                    dataKey="value"
-                  >
-                    {scriptAllocationData.map((_, idx) => (
-                      <Cell key={`cell-${idx}`} fill={COLORS[idx % COLORS.length]} />
-                    ))}
-                  </Pie>
-                  <Tooltip
-                    contentStyle={{ backgroundColor: '#09090b', border: '1px solid #27272a', borderRadius: '8px' }}
-                    itemStyle={{ color: '#f4f4f5' }}
-                    labelStyle={{ color: '#71717a', fontWeight: 'bold' }}
-                    formatter={(val: unknown) => [formatCurrency(Number(val), settings.currencySymbol), 'Value']}
-                  />
-                  <Legend verticalAlign="bottom" height={36} iconType="circle" />
-                </PieChart>
-              </ResponsiveContainer>
+              <ErrorBoundary fallbackText="Failed to render script allocation chart.">
+                <ResponsiveContainer width="100%" height="100%">
+                  <PieChart>
+                    <Pie
+                      data={scriptAllocationData}
+                      cx="50%"
+                      cy="50%"
+                      innerRadius={55}
+                      outerRadius={80}
+                      paddingAngle={3}
+                      dataKey="value"
+                    >
+                      {scriptAllocationData.map((_, idx) => (
+                        <Cell key={`cell-${idx}`} fill={COLORS[idx % COLORS.length]} />
+                      ))}
+                    </Pie>
+                    <Tooltip
+                      contentStyle={{ backgroundColor: '#09090b', border: '1px solid #27272a', borderRadius: '8px' }}
+                      itemStyle={{ color: '#f4f4f5' }}
+                      labelStyle={{ color: '#71717a', fontWeight: 'bold' }}
+                      formatter={(val: unknown) => [formatCurrency(Number(val), settings.currencySymbol), 'Value']}
+                    />
+                    <Legend verticalAlign="bottom" height={36} iconType="circle" />
+                  </PieChart>
+                </ResponsiveContainer>
+              </ErrorBoundary>
             ) : (
               <p className="text-sm text-financial-muted">No open positions to display.</p>
             )}
@@ -400,23 +403,25 @@ export const Dashboard: React.FC = () => {
           </h4>
           <div className="h-48 md:h-64 flex items-center justify-center">
             {scriptRealisedPnLData.length > 0 ? (
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={scriptRealisedPnLData}>
-                  <XAxis dataKey="name" stroke="#71717a" fontSize={10} tickLine={false} />
-                  <YAxis stroke="#71717a" fontSize={10} tickFormatter={(v) => `₹${v}`} width={55} />
-                  <Tooltip
-                    contentStyle={{ backgroundColor: '#09090b', border: '1px solid #27272a', borderRadius: '8px' }}
-                    itemStyle={{ color: '#f4f4f5' }}
-                    labelStyle={{ color: '#71717a', fontWeight: 'bold' }}
-                    formatter={(val: unknown) => [formatCurrency(Number(val), settings.currencySymbol), 'Realised Net P&L']}
-                  />
-                  <Bar dataKey="value">
-                    {scriptRealisedPnLData.map((entry, idx) => (
-                      <Cell key={`cell-${idx}`} fill={entry.value >= 0 ? '#16a34a' : '#dc2626'} />
-                    ))}
-                  </Bar>
-                </BarChart>
-              </ResponsiveContainer>
+              <ErrorBoundary fallbackText="Failed to render realised P&L chart.">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={scriptRealisedPnLData}>
+                    <XAxis dataKey="name" stroke="#71717a" fontSize={10} tickLine={false} />
+                    <YAxis stroke="#71717a" fontSize={10} tickFormatter={(v) => `₹${v}`} width={55} />
+                    <Tooltip
+                      contentStyle={{ backgroundColor: '#09090b', border: '1px solid #27272a', borderRadius: '8px' }}
+                      itemStyle={{ color: '#f4f4f5' }}
+                      labelStyle={{ color: '#71717a', fontWeight: 'bold' }}
+                      formatter={(val: unknown) => [formatCurrency(Number(val), settings.currencySymbol), 'Realised Net P&L']}
+                    />
+                    <Bar dataKey="value">
+                      {scriptRealisedPnLData.map((entry, idx) => (
+                        <Cell key={`cell-${idx}`} fill={entry.value >= 0 ? '#16a34a' : '#dc2626'} />
+                      ))}
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+              </ErrorBoundary>
             ) : (
               <p className="text-sm text-financial-muted">No closed trade histories.</p>
             )}
@@ -430,19 +435,21 @@ export const Dashboard: React.FC = () => {
           </h4>
           <div className="h-48 md:h-64 flex items-center justify-center">
             {cumulativePnLData.length > 0 ? (
-              <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={cumulativePnLData}>
-                  <XAxis dataKey="date" stroke="#71717a" fontSize={10} />
-                  <YAxis stroke="#71717a" fontSize={10} width={55} />
-                  <Tooltip
-                    contentStyle={{ backgroundColor: '#09090b', border: '1px solid #27272a', borderRadius: '8px' }}
-                    itemStyle={{ color: '#f4f4f5' }}
-                    labelStyle={{ color: '#71717a', fontWeight: 'bold' }}
-                    formatter={(val: unknown) => [formatCurrency(Number(val), settings.currencySymbol), 'Cumulative P&L']}
-                  />
-                  <Line type="monotone" dataKey="Cumulative Net P&L" stroke="#3b82f6" strokeWidth={2.5} dot={true} />
-                </LineChart>
-              </ResponsiveContainer>
+              <ErrorBoundary fallbackText="Failed to render cumulative P&L chart.">
+                <ResponsiveContainer width="100%" height="100%">
+                  <LineChart data={cumulativePnLData}>
+                    <XAxis dataKey="date" stroke="#71717a" fontSize={10} />
+                    <YAxis stroke="#71717a" fontSize={10} width={55} />
+                    <Tooltip
+                      contentStyle={{ backgroundColor: '#09090b', border: '1px solid #27272a', borderRadius: '8px' }}
+                      itemStyle={{ color: '#f4f4f5' }}
+                      labelStyle={{ color: '#71717a', fontWeight: 'bold' }}
+                      formatter={(val: unknown) => [formatCurrency(Number(val), settings.currencySymbol), 'Cumulative P&L']}
+                    />
+                    <Line type="monotone" dataKey="Cumulative Net P&L" stroke="#3b82f6" strokeWidth={2.5} dot={true} />
+                  </LineChart>
+                </ResponsiveContainer>
+              </ErrorBoundary>
             ) : (
               <p className="text-sm text-financial-muted">Add sell trades to plot profits line.</p>
             )}
@@ -467,53 +474,55 @@ export const Dashboard: React.FC = () => {
 
           <div className="h-44 md:h-56 flex items-center justify-center">
             {sectorAllocationData.sectorData.length > 0 ? (
-              selectedSector ? (
-                // Industry Drilldown Bar Chart
-                <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={sectorAllocationData.industryData[selectedSector] || []}>
-                    <XAxis dataKey="name" stroke="#71717a" fontSize={10} />
-                    <YAxis stroke="#71717a" fontSize={10} width={55} />
-                    <Tooltip
-                      contentStyle={{ backgroundColor: '#09090b', border: '1px solid #27272a', borderRadius: '8px' }}
-                      itemStyle={{ color: '#f4f4f5' }}
-                      labelStyle={{ color: '#71717a', fontWeight: 'bold' }}
-                      formatter={(val: unknown) => [formatCurrency(Number(val), settings.currencySymbol), 'Industry Value']}
-                    />
-                    <Bar dataKey="value" fill="#8B5CF6" radius={[4, 4, 0, 0]} />
-                  </BarChart>
-                </ResponsiveContainer>
-              ) : (
-                // Main Sector Allocation Pie
-                <ResponsiveContainer width="100%" height="100%">
-                  <PieChart>
-                    <Pie
-                      data={sectorAllocationData.sectorData}
-                      cx="50%"
-                      cy="50%"
-                      innerRadius={45}
-                      outerRadius={75}
-                      paddingAngle={2}
-                      dataKey="value"
-                      onClick={(data) => {
-                        if (data && data.name) {
-                          setSelectedSector(data.name);
-                        }
-                      }}
-                    >
-                      {sectorAllocationData.sectorData.map((_, idx) => (
-                        <Cell key={`cell-${idx}`} fill={COLORS[idx % COLORS.length]} className="cursor-pointer hover:scale-102 transition-transform" />
-                      ))}
-                    </Pie>
-                    <Tooltip
-                      contentStyle={{ backgroundColor: '#09090b', border: '1px solid #27272a', borderRadius: '8px' }}
-                      itemStyle={{ color: '#f4f4f5' }}
-                      labelStyle={{ color: '#71717a', fontWeight: 'bold' }}
-                      formatter={(val: unknown) => [formatCurrency(Number(val), settings.currencySymbol), 'Sector Value']}
-                    />
-                    <Legend verticalAlign="bottom" height={36} iconType="circle" />
-                  </PieChart>
-                </ResponsiveContainer>
-              )
+              <ErrorBoundary fallbackText="Failed to render sector/industry chart.">
+                {selectedSector ? (
+                  // Industry Drilldown Bar Chart
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={sectorAllocationData.industryData[selectedSector] || []}>
+                      <XAxis dataKey="name" stroke="#71717a" fontSize={10} />
+                      <YAxis stroke="#71717a" fontSize={10} width={55} />
+                      <Tooltip
+                        contentStyle={{ backgroundColor: '#09090b', border: '1px solid #27272a', borderRadius: '8px' }}
+                        itemStyle={{ color: '#f4f4f5' }}
+                        labelStyle={{ color: '#71717a', fontWeight: 'bold' }}
+                        formatter={(val: unknown) => [formatCurrency(Number(val), settings.currencySymbol), 'Industry Value']}
+                      />
+                      <Bar dataKey="value" fill="#8B5CF6" radius={[4, 4, 0, 0]} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                ) : (
+                  // Main Sector Allocation Pie
+                  <ResponsiveContainer width="100%" height="100%">
+                    <PieChart>
+                      <Pie
+                        data={sectorAllocationData.sectorData}
+                        cx="50%"
+                        cy="50%"
+                        innerRadius={45}
+                        outerRadius={75}
+                        paddingAngle={2}
+                        dataKey="value"
+                        onClick={(data) => {
+                          if (data && data.name) {
+                            setSelectedSector(data.name);
+                          }
+                        }}
+                      >
+                        {sectorAllocationData.sectorData.map((_, idx) => (
+                          <Cell key={`cell-${idx}`} fill={COLORS[idx % COLORS.length]} className="cursor-pointer hover:scale-102 transition-transform" />
+                        ))}
+                      </Pie>
+                      <Tooltip
+                        contentStyle={{ backgroundColor: '#09090b', border: '1px solid #27272a', borderRadius: '8px' }}
+                        itemStyle={{ color: '#f4f4f5' }}
+                        labelStyle={{ color: '#71717a', fontWeight: 'bold' }}
+                        formatter={(val: unknown) => [formatCurrency(Number(val), settings.currencySymbol), 'Sector Value']}
+                      />
+                      <Legend verticalAlign="bottom" height={36} iconType="circle" />
+                    </PieChart>
+                  </ResponsiveContainer>
+                )}
+              </ErrorBoundary>
             ) : (
               <p className="text-sm text-financial-muted">Master database upload required to group by sector.</p>
             )}
