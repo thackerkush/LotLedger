@@ -73,11 +73,11 @@ export const exportToExcel = async (
 
   if (options.format === 'multi-tab') {
     // 3. Write entities
-    writeTransactionsSheet(wb, state.transactions);
-    writeLotsSheet(wb, state.lots);
-    writeClosedTradesSheet(wb, state.closedTrades);
-    writeDividendsSheet(wb, state.dividends);
-    writeCorporateActionsSheet(wb, state.corporateActions);
+    writeTransactionsSheet(wb, state.transactions || []);
+    writeLotsSheet(wb, state.lots || []);
+    writeClosedTradesSheet(wb, state.closedTrades || []);
+    writeDividendsSheet(wb, state.dividends || []);
+    writeCorporateActionsSheet(wb, state.corporateActions || []);
 
     if (options.includeWatchlist) {
       writeWatchlistSheet(wb, state.watchlist || []);
@@ -192,16 +192,16 @@ const writeMetaSheet = (wb: ExcelJS.Workbook, state: AppState, options: ExportOp
   ws.addRow({ key: 'appVersion', value: '1.2.0' });
   ws.addRow({ key: 'exportedProfile', value: state.activeProfile });
   ws.addRow({ key: 'exportDate', value: new Date().toISOString() });
-  ws.addRow({ key: 'allProfiles', value: JSON.stringify(state.profiles) });
+  ws.addRow({ key: 'allProfiles', value: JSON.stringify(state.profiles || []) });
   ws.addRow({
     key: 'dataRowCounts',
     value: JSON.stringify({
-      transactions: state.transactions.length,
-      lots: state.lots.length,
-      closedTrades: state.closedTrades.length,
-      dividends: state.dividends.length,
-      corporateActions: state.corporateActions.length,
-      watchlist: state.watchlist ? state.watchlist.length : 0
+      transactions: (state.transactions || []).length,
+      lots: (state.lots || []).length,
+      closedTrades: (state.closedTrades || []).length,
+      dividends: (state.dividends || []).length,
+      corporateActions: (state.corporateActions || []).length,
+      watchlist: (state.watchlist || []).length
     })
   });
   ws.addRow({ key: 'exportFormat', value: options.format });
@@ -253,7 +253,9 @@ const writePortfolioSummary = (wb: ExcelJS.Workbook, state: AppState) => {
   searchHeader.alignment = { horizontal: 'center', vertical: 'middle' };
   ws.getRow(11).height = 24;
 
-  const firstScript = state.transactions.length > 0 ? state.transactions[0].script.toUpperCase() : 'RELIANCE';
+  const firstScript = state.transactions && state.transactions.length > 0 
+    ? (state.transactions[0].script || 'RELIANCE').toUpperCase() 
+    : 'RELIANCE';
 
   ws.addRow(['Enter Script Name:', firstScript]);
   const inputCell = ws.getCell('B12');
@@ -294,26 +296,26 @@ const writeTransactionsSheet = (wb: ExcelJS.Workbook, data: Transaction[]) => {
   addStandardSheet<Transaction>(wb, 'Transactions', headers, data, 'FF1D4ED8', (t) => [
     t.id,
     toExcelDateDisplay(t.date),
-    t.script.toUpperCase(),
+    (t.script || '').toUpperCase(),
     t.exchange,
     t.portfolio,
     t.type,
     t.tradeType || 'DELIVERY',
-    t.type === 'SELL' ? -Math.abs(t.quantity) : t.quantity,
-    t.price,
-    t.grossValue !== undefined ? t.grossValue : (t.quantity * t.price),
-    t.brokerage,
-    t.stt,
+    t.type === 'SELL' ? -Math.abs(t.quantity || 0) : (t.quantity || 0),
+    t.price || 0,
+    t.grossValue !== undefined ? t.grossValue : ((t.quantity || 0) * (t.price || 0)),
+    t.brokerage || 0,
+    t.stt || 0,
     t.exchangeCharges || 0,
     t.sebiCharges || 0,
     t.stampDuty || 0,
-    t.dpCharges,
-    t.gst,
-    t.totalCost,
+    t.dpCharges || 0,
+    t.gst || 0,
+    t.totalCost || 0,
     t.brokerName || '',
     t.orderId || '',
     t.importSource || 'EXCEL',
-    t.notes
+    t.notes || ''
   ]);
 };
 
@@ -330,15 +332,15 @@ const writeLotsSheet = (wb: ExcelJS.Workbook, data: Lot[]) => {
     return [
       l.id,
       l.buyTransactionId,
-      l.script.toUpperCase(),
+      (l.script || '').toUpperCase(),
       l.exchange,
       l.portfolio,
       toExcelDateDisplay(l.buyDate),
-      l.buyPrice,
-      l.avgBuyPrice !== undefined ? l.avgBuyPrice : l.buyPrice,
-      l.originalQty,
-      l.remainingQty,
-      l.totalCost,
+      l.buyPrice || 0,
+      l.avgBuyPrice !== undefined ? l.avgBuyPrice : (l.buyPrice || 0),
+      l.originalQty || 0,
+      l.remainingQty || 0,
+      l.totalCost || 0,
       l.targetPrice !== undefined ? l.targetPrice : '',
       l.stopLossPrice !== undefined ? l.stopLossPrice : '',
       l.isin || '',
@@ -346,7 +348,7 @@ const writeLotsSheet = (wb: ExcelJS.Workbook, data: Lot[]) => {
       l.currentPrice !== undefined ? l.currentPrice : '',
       { formula: `=IF(P${r}>0,(P${r}-H${r})*J${r},"")` },
       { formula: `=IF(K${r}>0,Q${r}/K${r}*100,"")` },
-      l.notes
+      l.notes || ''
     ];
   });
 };
@@ -363,23 +365,23 @@ const writeClosedTradesSheet = (wb: ExcelJS.Workbook, data: ClosedTrade[]) => {
     ct.id,
     ct.sellTransactionId,
     ct.buyLotId,
-    ct.script.toUpperCase(),
+    (ct.script || '').toUpperCase(),
     ct.exchange,
     ct.portfolio,
     toExcelDateDisplay(ct.buyDate),
     toExcelDateDisplay(ct.sellDate),
-    ct.buyPrice,
-    ct.sellPrice,
-    ct.qty,
-    ct.buyCost,
+    ct.buyPrice || 0,
+    ct.sellPrice || 0,
+    ct.qty || 0,
+    ct.buyCost || 0,
     ct.buyCharges || 0,
-    ct.sellProceeds,
+    ct.sellProceeds || 0,
     ct.sellCharges || 0,
-    ct.grossPnL,
-    ct.netPnL,
+    ct.grossPnL || 0,
+    ct.netPnL || 0,
     ct.capitalGainType || (ct.isLTCG ? 'LTCG' : 'STCG'),
     ct.taxableGain !== undefined ? ct.taxableGain : '',
-    ct.holdingDays,
+    ct.holdingDays || 0,
     ct.isLTCG ? 'LTCG' : 'STCG'
   ]);
 };
@@ -395,14 +397,14 @@ const writeDividendsSheet = (wb: ExcelJS.Workbook, data: Dividend[]) => {
     toExcelDateDisplay(d.date),
     d.recordDate ? toExcelDateDisplay(d.recordDate) : '',
     d.exDividendDate ? toExcelDateDisplay(d.exDividendDate) : '',
-    d.script.toUpperCase(),
+    (d.script || '').toUpperCase(),
     d.portfolio || 'Default',
     d.dividendType || 'FINAL',
-    d.qty,
-    d.dividendPerShare,
-    d.totalAmount,
+    d.qty || 0,
+    d.dividendPerShare || 0,
+    d.totalAmount || 0,
     d.tds || 0,
-    d.netDividend !== undefined ? d.netDividend : (d.totalAmount - (d.tds || 0)),
+    d.netDividend !== undefined ? d.netDividend : ((d.totalAmount || 0) - (d.tds || 0)),
     d.notes || ''
   ]);
 };
@@ -416,7 +418,7 @@ const writeCorporateActionsSheet = (wb: ExcelJS.Workbook, data: CorporateAction[
   addStandardSheet<CorporateAction>(wb, 'CorporateActions', headers, data, 'FF0F766E', (ca) => [
     ca.id,
     toExcelDateDisplay(ca.date),
-    ca.script.toUpperCase(),
+    (ca.script || '').toUpperCase(),
     ca.type,
     ca.ratio || '',
     ca.parentSymbol || '',
@@ -425,7 +427,7 @@ const writeCorporateActionsSheet = (wb: ExcelJS.Workbook, data: CorporateAction[
     ca.childCostPercent !== undefined ? ca.childCostPercent : '',
     ca.issuePrice !== undefined ? ca.issuePrice : '',
     ca.applied ? 'Applied' : 'Pending',
-    ca.notes
+    ca.notes || ''
   ]);
 };
 
@@ -437,7 +439,7 @@ const writeWatchlistSheet = (wb: ExcelJS.Workbook, data: WatchlistEntry[]) => {
   ];
   addStandardSheet<WatchlistEntry>(wb, 'Watchlist', headers, data || [], 'FF6366F1', (w) => [
     w.id,
-    w.script.toUpperCase(),
+    (w.script || '').toUpperCase(),
     w.exchange || 'NSE',
     w.targetPrice !== null && w.targetPrice !== undefined ? w.targetPrice : '',
     w.stopLossPrice !== undefined ? w.stopLossPrice : '',
@@ -460,9 +462,11 @@ const writeSettingsSheet = (wb: ExcelJS.Workbook, data: Settings) => {
   ws.getRow(1).font = { color: { argb: 'FFFFFFFF' }, bold: true };
   ws.getRow(1).eachCell(c => c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1F2937' } });
 
-  Object.entries(data).forEach(([key, val]) => {
-    ws.addRow({ key, value: typeof val === 'object' ? JSON.stringify(val) : val });
-  });
+  if (data) {
+    Object.entries(data).forEach(([key, val]) => {
+      ws.addRow({ key, value: typeof val === 'object' ? JSON.stringify(val) : val });
+    });
+  }
 
   applyPageSetup(ws);
 };
@@ -472,19 +476,19 @@ const writeAllPerScriptSheets = (wb: ExcelJS.Workbook, state: AppState) => {
   const { lots, closedTrades, dividends, watchlist, corporateActions } = state;
 
   const scripts = Array.from(new Set([
-    ...lots.map(l => l.script.toUpperCase()),
-    ...closedTrades.map(ct => ct.script.toUpperCase())
-  ])).sort();
+    ...(lots || []).map(l => (l.script || '').toUpperCase()),
+    ...(closedTrades || []).map(ct => (ct.script || '').toUpperCase())
+  ])).filter(Boolean).sort();
 
   const colorsRotation = ['FF1D4ED8', 'FF15803D', 'FF92400E', 'FF7E22CE', 'FF0F766E'];
 
   scripts.forEach((scriptName, index) => {
     const tabColor = colorsRotation[index % colorsRotation.length];
-    const scriptLots = lots.filter(l => l.script.toUpperCase() === scriptName);
-    const scriptClosed = closedTrades.filter(ct => ct.script.toUpperCase() === scriptName);
-    const scriptDivs = dividends.filter(d => d.script.toUpperCase() === scriptName);
-    const scriptWl = watchlist ? watchlist.find(w => w.script.toUpperCase() === scriptName) : undefined;
-    const scriptCa = corporateActions ? corporateActions.filter(ca => ca.script.toUpperCase() === scriptName) : [];
+    const scriptLots = (lots || []).filter(l => (l.script || '').toUpperCase() === scriptName);
+    const scriptClosed = (closedTrades || []).filter(ct => (ct.script || '').toUpperCase() === scriptName);
+    const scriptDivs = (dividends || []).filter(d => (d.script || '').toUpperCase() === scriptName);
+    const scriptWl = watchlist ? watchlist.find(w => (w.script || '').toUpperCase() === scriptName) : undefined;
+    const scriptCa = corporateActions ? corporateActions.filter(ca => (ca.script || '').toUpperCase() === scriptName) : [];
 
     const ws = wb.addWorksheet(`[${scriptName}]`);
     ws.views = [{ showGridLines: true }];
@@ -500,14 +504,14 @@ const writeAllPerScriptSheets = (wb: ExcelJS.Workbook, state: AppState) => {
     ws.getRow(1).height = 30;
 
     // Section 2 — Key Metrics Cards (Rows 3–13)
-    const openQty = scriptLots.reduce((acc, l) => acc + l.remainingQty, 0);
-    const totalCostInvested = scriptLots.reduce((acc, l) => acc + l.totalCost, 0);
+    const openQty = scriptLots.reduce((acc, l) => acc + (l.remainingQty || 0), 0);
+    const totalCostInvested = scriptLots.reduce((acc, l) => acc + (l.totalCost || 0), 0);
     const avgBuyPrice = openQty > 0 ? totalCostInvested / openQty : 0;
 
     const targetPrice = scriptWl?.targetPrice ?? 0;
     const stopLossPrice = scriptWl?.stopLossPrice ?? 0;
-    const realisedPnL = scriptClosed.reduce((acc, ct) => acc + ct.netPnL, 0);
-    const totalDividends = scriptDivs.reduce((acc, d) => acc + (d.netDividend !== undefined ? d.netDividend : (d.totalAmount - (d.tds || 0))), 0);
+    const realisedPnL = scriptClosed.reduce((acc, ct) => acc + (ct.netPnL || 0), 0);
+    const totalDividends = scriptDivs.reduce((acc, d) => acc + (d.netDividend !== undefined ? d.netDividend : ((d.totalAmount || 0) - (d.tds || 0))), 0);
 
     let daysSinceEarliestBuy = 0;
     let daysToLTCGEarliest = 0;
@@ -520,8 +524,8 @@ const writeAllPerScriptSheets = (wb: ExcelJS.Workbook, state: AppState) => {
       daysToLTCGEarliest = Math.max(0, 365 - earliestHeld);
     }
 
-    const stcgRealised = scriptClosed.filter(ct => ct.capitalGainType === 'STCG' || (!ct.capitalGainType && !ct.isLTCG)).reduce((acc, ct) => acc + ct.netPnL, 0);
-    const ltcgRealised = scriptClosed.filter(ct => ct.capitalGainType === 'LTCG' || (!ct.capitalGainType && ct.isLTCG)).reduce((acc, ct) => acc + ct.netPnL, 0);
+    const stcgRealised = scriptClosed.filter(ct => ct.capitalGainType === 'STCG' || (!ct.capitalGainType && !ct.isLTCG)).reduce((acc, ct) => acc + (ct.netPnL || 0), 0);
+    const ltcgRealised = scriptClosed.filter(ct => ct.capitalGainType === 'LTCG' || (!ct.capitalGainType && ct.isLTCG)).reduce((acc, ct) => acc + (ct.netPnL || 0), 0);
 
     ws.addRow([]); // Row 2 spacer
     ws.addRow(['Open Quantity', `${openQty} shares`]);
@@ -625,18 +629,18 @@ const writeAllPerScriptSheets = (wb: ExcelJS.Workbook, state: AppState) => {
         const daysToLtcg = Math.max(0, 365 - daysHeld);
         return [
           l.id,
-          l.portfolio,
+          l.portfolio || 'Default',
           toExcelDateDisplay(l.buyDate),
-          l.buyPrice,
-          l.avgBuyPrice !== undefined ? l.avgBuyPrice : l.buyPrice,
-          l.originalQty,
-          l.remainingQty,
-          l.totalCost,
+          l.buyPrice || 0,
+          l.avgBuyPrice !== undefined ? l.avgBuyPrice : (l.buyPrice || 0),
+          l.originalQty || 0,
+          l.remainingQty || 0,
+          l.totalCost || 0,
           l.targetPrice || '',
           l.stopLossPrice || '',
           daysHeld,
           daysToLtcg === 0 ? 'Already LTCG' : daysToLtcg,
-          l.notes
+          l.notes || ''
         ];
       }),
       (c, head, val) => {
@@ -652,18 +656,18 @@ const writeAllPerScriptSheets = (wb: ExcelJS.Workbook, state: AppState) => {
       ['Trade ID', 'Portfolio', 'Buy Date', 'Sell Date', 'Qty', 'Buy Price', 'Sell Price', 'Buy Cost', 'Net Proceeds', 'Gross P&L', 'Net P&L', 'Gain Type', 'Holding Days'],
       scriptClosed.map(ct => [
         ct.id,
-        ct.portfolio,
+        ct.portfolio || 'Default',
         toExcelDateDisplay(ct.buyDate),
         toExcelDateDisplay(ct.sellDate),
-        ct.qty,
-        ct.buyPrice,
-        ct.sellPrice,
-        ct.buyCost,
-        ct.sellProceeds,
-        ct.grossPnL,
-        ct.netPnL,
+        ct.qty || 0,
+        ct.buyPrice || 0,
+        ct.sellPrice || 0,
+        ct.buyCost || 0,
+        ct.sellProceeds || 0,
+        ct.grossPnL || 0,
+        ct.netPnL || 0,
         ct.capitalGainType || (ct.isLTCG ? 'LTCG' : 'STCG'),
-        ct.holdingDays
+        ct.holdingDays || 0
       ]),
       (c, head, val) => {
         if (head === 'Net P&L' && typeof val === 'number') {
@@ -680,11 +684,11 @@ const writeAllPerScriptSheets = (wb: ExcelJS.Workbook, state: AppState) => {
         d.id,
         toExcelDateDisplay(d.date),
         d.dividendType || 'FINAL',
-        d.qty,
-        d.dividendPerShare,
-        d.totalAmount,
+        d.qty || 0,
+        d.dividendPerShare || 0,
+        d.totalAmount || 0,
         d.tds || 0,
-        d.netDividend !== undefined ? d.netDividend : (d.totalAmount - (d.tds || 0))
+        d.netDividend !== undefined ? d.netDividend : ((d.totalAmount || 0) - (d.tds || 0))
       ])
     );
 
@@ -734,9 +738,9 @@ const writeTaxSummarySheet = (wb: ExcelJS.Workbook, state: AppState) => {
   banner.alignment = { horizontal: 'center', vertical: 'middle' };
   ws.getRow(1).height = 30;
 
-  const getFY = (dateStr: string): string => {
-    if (!dateStr) return 'Unknown';
-    const date = new Date(dateStr);
+  const getFY = (dateVal: any): string => {
+    if (!dateVal) return 'Unknown';
+    const date = dateVal instanceof Date ? dateVal : new Date(dateVal);
     if (isNaN(date.getTime())) return 'Unknown';
     const year = date.getFullYear();
     const month = date.getMonth();
@@ -748,8 +752,8 @@ const writeTaxSummarySheet = (wb: ExcelJS.Workbook, state: AppState) => {
   };
 
   const fyrs = new Set<string>();
-  closedTrades.forEach(ct => fyrs.add(getFY(ct.sellDate)));
-  dividends.forEach(d => fyrs.add(getFY(d.date)));
+  (closedTrades || []).forEach(ct => fyrs.add(getFY(ct.sellDate)));
+  (dividends || []).forEach(d => fyrs.add(getFY(d.date)));
 
   const fyList = Array.from(fyrs).filter(fy => fy !== 'Unknown').sort().reverse();
 
@@ -765,7 +769,7 @@ const writeTaxSummarySheet = (wb: ExcelJS.Workbook, state: AppState) => {
   fyList.forEach((fy) => {
     ws.mergeCells(`A${curRow}:D${curRow}`);
     const fyHeader = ws.getCell(`A${curRow}`);
-    fyHeader.value = `Financial Year: 20${fy}`;
+    fyHeader.value = `Financial Year: ${fy}`;
     fyHeader.font = { name: 'Outfit', size: 12, bold: true, color: { argb: 'FFFFFFFF' } };
     fyHeader.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1E3A5F' } };
     fyHeader.alignment = { horizontal: 'center', vertical: 'middle' };
@@ -777,17 +781,17 @@ const writeTaxSummarySheet = (wb: ExcelJS.Workbook, state: AppState) => {
     ws.getRow(curRow).eachCell(c => c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF1F5F9' } });
     curRow++;
 
-    const fyClosed = closedTrades.filter(ct => getFY(ct.sellDate) === fy);
-    const fyDivs = dividends.filter(d => getFY(d.date) === fy);
+    const fyClosed = (closedTrades || []).filter(ct => getFY(ct.sellDate) === fy);
+    const fyDivs = (dividends || []).filter(d => getFY(d.date) === fy);
 
-    const stcgRealised = fyClosed.filter(ct => ct.capitalGainType === 'STCG' || (!ct.capitalGainType && !ct.isLTCG)).reduce((acc, ct) => acc + ct.netPnL, 0);
-    const ltcgRealised = fyClosed.filter(ct => ct.capitalGainType === 'LTCG' || (!ct.capitalGainType && ct.isLTCG)).reduce((acc, ct) => acc + ct.netPnL, 0);
+    const stcgRealised = fyClosed.filter(ct => ct.capitalGainType === 'STCG' || (!ct.capitalGainType && !ct.isLTCG)).reduce((acc, ct) => acc + (ct.netPnL || 0), 0);
+    const ltcgRealised = fyClosed.filter(ct => ct.capitalGainType === 'LTCG' || (!ct.capitalGainType && ct.isLTCG)).reduce((acc, ct) => acc + (ct.netPnL || 0), 0);
     const stcgTax = Math.max(0, stcgRealised) * 0.20;
 
     const taxableLTCG = Math.max(0, ltcgRealised - 125000);
     const ltcgTax = taxableLTCG * 0.125;
 
-    const grossDiv = fyDivs.reduce((acc, d) => acc + d.totalAmount, 0);
+    const grossDiv = fyDivs.reduce((acc, d) => acc + (d.totalAmount || 0), 0);
     const tds = fyDivs.reduce((acc, d) => acc + (d.tds || 0), 0);
     const netDiv = grossDiv - tds;
 
@@ -870,7 +874,9 @@ const writeSingleSheet = (wb: ExcelJS.Workbook, state: AppState, options: Export
   searchHeader.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1E3A5F' } };
   searchHeader.alignment = { horizontal: 'center' };
 
-  const firstScript = state.transactions.length > 0 ? state.transactions[0].script.toUpperCase() : 'RELIANCE';
+  const firstScript = state.transactions && state.transactions.length > 0 
+    ? (state.transactions[0].script || 'RELIANCE').toUpperCase() 
+    : 'RELIANCE';
   ws.addRow(['Enter Script Name:', firstScript]);
   const inputCell = ws.getCell('B11');
   inputCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFFFC4' } };
@@ -987,36 +993,36 @@ const writeSingleSheet = (wb: ExcelJS.Workbook, state: AppState, options: Export
   appendSection<Transaction>(
     'Transactions',
     ['id', 'date', 'script', 'exchange', 'portfolio', 'type', 'tradeType', 'quantity', 'price', 'grossValue', 'brokerage', 'stt', 'exchangeCharges', 'sebiCharges', 'stampDuty', 'dpCharges', 'gst', 'totalCost', 'brokerName', 'orderId', 'importSource', 'notes'],
-    state.transactions,
-    (t) => [t.id, toExcelDateDisplay(t.date), t.script.toUpperCase(), t.exchange, t.portfolio, t.type, t.tradeType || 'DELIVERY', t.type === 'SELL' ? -Math.abs(t.quantity) : t.quantity, t.price, t.grossValue !== undefined ? t.grossValue : (t.quantity * t.price), t.brokerage, t.stt, t.exchangeCharges || 0, t.sebiCharges || 0, t.stampDuty || 0, t.dpCharges, t.gst, t.totalCost, t.brokerName || '', t.orderId || '', t.importSource || 'EXCEL', t.notes]
+    state.transactions || [],
+    (t) => [t.id, toExcelDateDisplay(t.date), (t.script || '').toUpperCase(), t.exchange, t.portfolio, t.type, t.tradeType || 'DELIVERY', t.type === 'SELL' ? -Math.abs(t.quantity || 0) : (t.quantity || 0), t.price || 0, t.grossValue !== undefined ? t.grossValue : ((t.quantity || 0) * (t.price || 0)), t.brokerage || 0, t.stt || 0, t.exchangeCharges || 0, t.sebiCharges || 0, t.stampDuty || 0, t.dpCharges || 0, t.gst || 0, t.totalCost || 0, t.brokerName || '', t.orderId || '', t.importSource || 'EXCEL', t.notes || '']
   );
 
   appendSection<Lot>(
     'Lots',
     ['id', 'buyTransactionId', 'script', 'exchange', 'portfolio', 'buyDate', 'buyPrice', 'avgBuyPrice', 'originalQty', 'remainingQty', 'totalCost', 'targetPrice', 'stopLossPrice', 'isin', 'sector', 'currentPrice', 'notes'],
-    state.lots,
-    (l) => [l.id, l.buyTransactionId, l.script.toUpperCase(), l.exchange, l.portfolio, toExcelDateDisplay(l.buyDate), l.buyPrice, l.avgBuyPrice !== undefined ? l.avgBuyPrice : l.buyPrice, l.originalQty, l.remainingQty, l.totalCost, l.targetPrice !== undefined ? l.targetPrice : '', l.stopLossPrice !== undefined ? l.stopLossPrice : '', l.isin || '', l.sector || '', l.currentPrice !== undefined ? l.currentPrice : '', l.notes]
+    state.lots || [],
+    (l) => [l.id, l.buyTransactionId, (l.script || '').toUpperCase(), l.exchange, l.portfolio, toExcelDateDisplay(l.buyDate), l.buyPrice || 0, l.avgBuyPrice !== undefined ? l.avgBuyPrice : (l.buyPrice || 0), l.originalQty || 0, l.remainingQty || 0, l.totalCost || 0, l.targetPrice !== undefined ? l.targetPrice : '', l.stopLossPrice !== undefined ? l.stopLossPrice : '', l.isin || '', l.sector || '', l.currentPrice !== undefined ? l.currentPrice : '', l.notes || '']
   );
 
   appendSection<ClosedTrade>(
     'ClosedTrades',
     ['id', 'sellTransactionId', 'buyLotId', 'script', 'exchange', 'portfolio', 'buyDate', 'sellDate', 'buyPrice', 'sellPrice', 'qty', 'buyCost', 'buyCharges', 'sellProceeds', 'sellCharges', 'grossPnL', 'netPnL', 'capitalGainType', 'taxableGain', 'holdingDays', 'isLTCG'],
-    state.closedTrades,
-    (ct) => [ct.id, ct.sellTransactionId, ct.buyLotId, ct.script.toUpperCase(), ct.exchange, ct.portfolio, toExcelDateDisplay(ct.buyDate), toExcelDateDisplay(ct.sellDate), ct.buyPrice, ct.sellPrice, ct.qty, ct.buyCost, ct.buyCharges || 0, ct.sellProceeds, ct.sellCharges || 0, ct.grossPnL, ct.netPnL, ct.capitalGainType || (ct.isLTCG ? 'LTCG' : 'STCG'), ct.taxableGain !== undefined ? ct.taxableGain : '', ct.holdingDays, ct.isLTCG ? 'LTCG' : 'STCG']
+    state.closedTrades || [],
+    (ct) => [ct.id, ct.sellTransactionId, ct.buyLotId, (ct.script || '').toUpperCase(), ct.exchange, ct.portfolio, toExcelDateDisplay(ct.buyDate), toExcelDateDisplay(ct.sellDate), ct.buyPrice || 0, ct.sellPrice || 0, ct.qty || 0, ct.buyCost || 0, ct.buyCharges || 0, ct.sellProceeds || 0, ct.sellCharges || 0, ct.grossPnL || 0, ct.netPnL || 0, ct.capitalGainType || (ct.isLTCG ? 'LTCG' : 'STCG'), ct.taxableGain !== undefined ? ct.taxableGain : '', ct.holdingDays || 0, ct.isLTCG ? 'LTCG' : 'STCG']
   );
 
   appendSection<Dividend>(
     'Dividends',
     ['id', 'date', 'recordDate', 'exDividendDate', 'script', 'portfolio', 'dividendType', 'qty', 'dividendPerShare', 'totalAmount', 'tds', 'netDividend', 'notes'],
-    state.dividends,
-    (d) => [d.id, toExcelDateDisplay(d.date), d.recordDate ? toExcelDateDisplay(d.recordDate) : '', d.exDividendDate ? toExcelDateDisplay(d.exDividendDate) : '', d.script.toUpperCase(), d.portfolio || 'Default', d.dividendType || 'FINAL', d.qty, d.dividendPerShare, d.totalAmount, d.tds || 0, d.netDividend !== undefined ? d.netDividend : (d.totalAmount - (d.tds || 0)), d.notes || '']
+    state.dividends || [],
+    (d) => [d.id, toExcelDateDisplay(d.date), d.recordDate ? toExcelDateDisplay(d.recordDate) : '', d.exDividendDate ? toExcelDateDisplay(d.exDividendDate) : '', (d.script || '').toUpperCase(), d.portfolio || 'Default', d.dividendType || 'FINAL', d.qty || 0, d.dividendPerShare || 0, d.totalAmount || 0, d.tds || 0, d.netDividend !== undefined ? d.netDividend : ((d.totalAmount || 0) - (d.tds || 0)), d.notes || '']
   );
 
   appendSection<CorporateAction>(
     'CorporateActions',
     ['id', 'date', 'script', 'type', 'ratio', 'parentSymbol', 'childSymbol', 'parentCostPercent', 'childCostPercent', 'issuePrice', 'applied', 'notes'],
-    state.corporateActions,
-    (ca) => [ca.id, toExcelDateDisplay(ca.date), ca.script.toUpperCase(), ca.type, ca.ratio || '', ca.parentSymbol || '', ca.childSymbol || '', ca.parentCostPercent !== undefined ? ca.parentCostPercent : '', ca.childCostPercent !== undefined ? ca.childCostPercent : '', ca.issuePrice !== undefined ? ca.issuePrice : '', ca.applied ? 'Applied' : 'Pending', ca.notes]
+    state.corporateActions || [],
+    (ca) => [ca.id, toExcelDateDisplay(ca.date), (ca.script || '').toUpperCase(), ca.type, ca.ratio || '', ca.parentSymbol || '', ca.childSymbol || '', ca.parentCostPercent !== undefined ? ca.parentCostPercent : '', ca.childCostPercent !== undefined ? ca.childCostPercent : '', ca.issuePrice !== undefined ? ca.issuePrice : '', ca.applied ? 'Applied' : 'Pending', ca.notes || '']
   );
 
   if (options.includeWatchlist) {
@@ -1024,7 +1030,7 @@ const writeSingleSheet = (wb: ExcelJS.Workbook, state: AppState, options: Export
       'Watchlist',
       ['id', 'script', 'exchange', 'targetPrice', 'stopLossPrice', 'alertType', 'addedDate', 'sector', 'notes'],
       state.watchlist || [],
-      (w) => [w.id, w.script.toUpperCase(), w.exchange || 'NSE', w.targetPrice !== null && w.targetPrice !== undefined ? w.targetPrice : '', w.stopLossPrice !== undefined ? w.stopLossPrice : '', w.alertType || 'NONE', w.addedDate ? toExcelDateDisplay(w.addedDate) : '', w.sector || '', w.notes || '']
+      (w) => [w.id, (w.script || '').toUpperCase(), w.exchange || 'NSE', w.targetPrice !== null && w.targetPrice !== undefined ? w.targetPrice : '', w.stopLossPrice !== undefined ? w.stopLossPrice : '', w.alertType || 'NONE', w.addedDate ? toExcelDateDisplay(w.addedDate) : '', w.sector || '', w.notes || '']
     );
   }
 
@@ -1040,10 +1046,12 @@ const writeSingleSheet = (wb: ExcelJS.Workbook, state: AppState, options: Export
   ws.getRow(currentRow).font = { bold: true };
   currentRow++;
 
-  Object.entries(state.settings).forEach(([key, val]) => {
-    ws.addRow([key, typeof val === 'object' ? JSON.stringify(val) : val]);
-    currentRow++;
-  });
+  if (state.settings) {
+    Object.entries(state.settings).forEach(([key, val]) => {
+      ws.addRow([key, typeof val === 'object' ? JSON.stringify(val) : val]);
+      currentRow++;
+    });
+  }
 
   const getCRng = (sectionName: string, headerName: string): string => {
     const r = ranges[sectionName];
@@ -1093,15 +1101,15 @@ export const exportTaxReport = async (state: AppState, fyYear: string): Promise<
     return d >= startDate && d <= endDate;
   };
 
-  const fyClosedTrades = closedTrades.filter(ct => inFY(ct.sellDate));
-  const fyDividends = dividends.filter(d => inFY(d.date));
+  const fyClosedTrades = (closedTrades || []).filter(ct => inFY(ct.sellDate));
+  const fyDividends = (dividends || []).filter(d => inFY(d.date));
 
   const fySTCGTrades = fyClosedTrades.filter(ct => ct.capitalGainType === 'STCG' || (!ct.capitalGainType && !ct.isLTCG));
   const fyLTCGTrades = fyClosedTrades.filter(ct => ct.capitalGainType === 'LTCG' || (!ct.capitalGainType && ct.isLTCG));
 
-  const totalSTCG = fySTCGTrades.reduce((acc, t) => acc + t.netPnL, 0);
-  const totalLTCG = fyLTCGTrades.reduce((acc, t) => acc + t.netPnL, 0);
-  const totalDiv = fyDividends.reduce((acc, d) => acc + d.totalAmount, 0);
+  const totalSTCG = fySTCGTrades.reduce((acc, t) => acc + (t.netPnL || 0), 0);
+  const totalLTCG = fyLTCGTrades.reduce((acc, t) => acc + (t.netPnL || 0), 0);
+  const totalDiv = fyDividends.reduce((acc, d) => acc + (d.totalAmount || 0), 0);
   const totalTDS = fyDividends.reduce((acc, d) => acc + (d.tds || 0), 0);
 
   // SHEET 1: Tax Summary
@@ -1267,26 +1275,26 @@ export const exportTaxReport = async (state: AppState, fyYear: string): Promise<
     'FF92400E',
     (ct) => [
       ct.id,
-      ct.script,
-      ct.exchange,
-      ct.portfolio,
+      ct.script || '',
+      ct.exchange || 'NSE',
+      ct.portfolio || 'Default',
       toExcelDateDisplay(ct.buyDate),
       toExcelDateDisplay(ct.sellDate),
-      ct.qty,
-      ct.buyPrice,
-      ct.sellPrice,
-      ct.buyCost,
-      ct.sellProceeds,
-      ct.grossPnL,
-      ct.netPnL,
-      Math.max(0, ct.netPnL) * 0.20
+      ct.qty || 0,
+      ct.buyPrice || 0,
+      ct.sellPrice || 0,
+      ct.buyCost || 0,
+      ct.sellProceeds || 0,
+      ct.grossPnL || 0,
+      ct.netPnL || 0,
+      Math.max(0, ct.netPnL || 0) * 0.20
     ]
   );
 
   // Sheet 3: LTCG Trades
   let cumulativeLTCG = 0;
   const processedLTCG = fyLTCGTrades.map((ct) => {
-    cumulativeLTCG += ct.netPnL;
+    cumulativeLTCG += (ct.netPnL || 0);
     const taxableAmt = Math.max(0, cumulativeLTCG - 125000);
     return {
       ...ct,
@@ -1302,20 +1310,20 @@ export const exportTaxReport = async (state: AppState, fyYear: string): Promise<
     'FF1D4ED8',
     (ct) => [
       ct.id,
-      ct.script,
-      ct.exchange,
-      ct.portfolio,
+      ct.script || '',
+      ct.exchange || 'NSE',
+      ct.portfolio || 'Default',
       toExcelDateDisplay(ct.buyDate),
       toExcelDateDisplay(ct.sellDate),
-      ct.qty,
-      ct.buyPrice,
-      ct.sellPrice,
-      ct.buyCost,
-      ct.sellProceeds,
-      ct.grossPnL,
-      ct.netPnL,
-      ct.cumLtcg,
-      ct.taxableAmt
+      ct.qty || 0,
+      ct.buyPrice || 0,
+      ct.sellPrice || 0,
+      ct.buyCost || 0,
+      ct.sellProceeds || 0,
+      ct.grossPnL || 0,
+      ct.netPnL || 0,
+      ct.cumLtcg || 0,
+      ct.taxableAmt || 0
     ]
   );
 
@@ -1344,12 +1352,12 @@ export const exportTaxReport = async (state: AppState, fyYear: string): Promise<
     (d) => [
       d.id,
       d.recordDate ? toExcelDateDisplay(d.recordDate) : toExcelDateDisplay(d.date),
-      d.script,
-      d.qty,
-      d.dividendPerShare,
-      d.totalAmount,
+      d.script || '',
+      d.qty || 0,
+      d.dividendPerShare || 0,
+      d.totalAmount || 0,
       d.tds || 0,
-      d.totalAmount - (d.tds || 0)
+      (d.totalAmount || 0) - (d.tds || 0)
     ]
   );
 

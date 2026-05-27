@@ -322,8 +322,9 @@ export const Settings: React.FC = () => {
         includeTaxAnalysis
       });
       showToast('Portfolio backup file downloaded successfully!', 'success');
-    } catch (e) {
-      showToast('Spreadsheet creation failed.', 'error');
+    } catch (e: any) {
+      console.error('Spreadsheet compilation error:', e);
+      showToast(`Spreadsheet creation failed: ${e?.message || e}`, 'error');
     }
   };
 

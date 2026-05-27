@@ -359,21 +359,25 @@ export const applyAdvancedExcelFeatures = async (
   }
 
   // 7. EXCEL DEFINED NAMES (NAMED RANGES)
-  const summaryWs = wb.getWorksheet('Portfolio Summary');
-  if (summaryWs) {
-    const namedRanges = [
-      { name: 'TotalInvested', formula: `'Portfolio Summary'!$B$3` },
-      { name: 'CurrentInvested', formula: `'Portfolio Summary'!$B$4` },
-      { name: 'NetRealisedPnL', formula: `'Portfolio Summary'!$B$5` },
-      { name: 'TotalDividends', formula: `'Portfolio Summary'!$B$6` },
-      { name: 'NetPortfolioProfit', formula: `'Portfolio Summary'!$B$7` },
-    ];
-    namedRanges.forEach(nr => {
-      wb.definedNames.add(nr.name, nr.formula);
-    });
-  }
+  try {
+    const summaryWs = wb.getWorksheet('Portfolio Summary');
+    if (summaryWs) {
+      const namedRanges = [
+        { name: 'TotalInvested', formula: `'Portfolio Summary'!$B$3` },
+        { name: 'CurrentInvested', formula: `'Portfolio Summary'!$B$4` },
+        { name: 'NetRealisedPnL', formula: `'Portfolio Summary'!$B$5` },
+        { name: 'TotalDividends', formula: `'Portfolio Summary'!$B$6` },
+        { name: 'NetPortfolioProfit', formula: `'Portfolio Summary'!$B$7` },
+      ];
+      namedRanges.forEach(nr => {
+        wb.definedNames.add(nr.name, nr.formula);
+      });
+    }
 
-  if (txWs) wb.definedNames.add('AllTransactions', `Transactions!$A$2:$V$9999`);
-  if (lotsWs) wb.definedNames.add('AllLots', `Lots!$A$2:$S$9999`);
-  if (ctWs) wb.definedNames.add('AllClosedTrades', `ClosedTrades!$A$2:$U$9999`);
+    if (txWs) wb.definedNames.add('AllTransactions', `Transactions!$A$2:$V$9999`);
+    if (lotsWs) wb.definedNames.add('AllLots', `Lots!$A$2:$S$9999`);
+    if (ctWs) wb.definedNames.add('AllClosedTrades', `ClosedTrades!$A$2:$U$9999`);
+  } catch (e) {
+    console.warn('Could not apply named ranges:', e);
+  }
 };
