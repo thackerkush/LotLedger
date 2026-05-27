@@ -1,17 +1,25 @@
 export interface Transaction {
   id: string;
-  date: string;
+  date: string;                // YYYY-MM-DD
   script: string;
   exchange: 'NSE' | 'BSE';
   portfolio: string;
   type: 'BUY' | 'SELL';
+  tradeType?: 'DELIVERY' | 'INTRADAY'; // NEW
   quantity: number;
   price: number;
+  grossValue?: number;          // NEW — quantity × price (pre-charge subtotal)
   brokerage: number;
-  dpCharges: number;
   stt: number;
+  exchangeCharges?: number;     // NEW — NSE/BSE transaction charges
+  sebiCharges?: number;         // NEW — SEBI turnover fee
+  stampDuty?: number;           // NEW — stamp duty (buy side only)
+  dpCharges: number;
   gst: number;
-  totalCost: number;
+  totalCost: number;           // net cost for BUY; gross value for SELL
+  brokerName?: string;         // NEW — "Zerodha", "Groww", "Angel", etc.
+  orderId?: string;            // NEW — broker order ID for reconciliation
+  importSource?: 'MANUAL' | 'CSV' | 'EXCEL'; // NEW — audit trail
   notes: string;
 }
 
@@ -23,9 +31,14 @@ export interface Lot {
   portfolio: string;
   buyDate: string;
   buyPrice: number;
+  avgBuyPrice?: number;         // NEW — totalCost / originalQty (stored, not formula)
   originalQty: number;
   remainingQty: number;
   totalCost: number;
+  targetPrice?: number;        // NEW — per-lot target sell price
+  stopLossPrice?: number;      // NEW — per-lot stop loss
+  isin?: string;               // NEW — 12-char ISIN for tax filing (e.g., INE002A01018)
+  sector?: string;             // NEW — denormalised from StockMaster for Excel reports
   currentPrice?: number;
   notes: string;
 }
@@ -43,21 +56,31 @@ export interface ClosedTrade {
   sellPrice: number;
   qty: number;
   buyCost: number;
+  buyCharges?: number;          // NEW — proportional buy-side charges for this lot
   sellProceeds: number;
+  sellCharges?: number;         // NEW — proportional sell-side charges for this lot
   grossPnL: number;
   netPnL: number;
   holdingDays: number;
-  isLTCG: boolean;
+  capitalGainType?: 'STCG' | 'LTCG' | 'INTRADAY'; // NEW — replaces isLTCG boolean
+  isLTCG: boolean;             // KEEP for backward compat — derived from capitalGainType
+  taxableGain?: number;        // NEW — netPnL minus applicable exemptions
 }
 
 export interface Dividend {
   id: string;
-  date: string;
+  date: string;                // Payment date, YYYY-MM-DD
+  recordDate?: string;         // NEW — record/book closure date
+  exDividendDate?: string;     // NEW — ex-dividend date
   script: string;
+  portfolio?: string;           // NEW — which portfolio received this dividend
+  dividendType?: 'INTERIM' | 'FINAL' | 'SPECIAL'; // NEW
   dividendPerShare: number;
   qty: number;
   totalAmount: number;
   tds: number;
+  netDividend?: number;         // NEW — totalAmount - tds (stored, not derived)
+  notes?: string;               // NEW — currently missing from Dividend type
 }
 
 export interface CorporateAction {
@@ -78,7 +101,12 @@ export interface CorporateAction {
 export interface WatchlistEntry {
   id: string;
   script: string;
+  exchange?: 'NSE' | 'BSE';    // NEW
   targetPrice: number | null;
+  stopLossPrice?: number;      // NEW
+  alertType?: 'TARGET' | 'STOP_LOSS' | 'BOTH' | 'NONE'; // NEW
+  addedDate?: string;          // NEW — YYYY-MM-DD
+  sector?: string;             // NEW
   notes: string;
 }
 

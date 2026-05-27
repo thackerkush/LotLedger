@@ -1,7 +1,8 @@
 /* eslint-disable @typescript-eslint/no-explicit-any, @typescript-eslint/no-unused-vars, no-useless-assignment, prefer-const, preserve-caught-error */
 import ExcelJS from 'exceljs';
 import { saveAs } from 'file-saver';
-import type { AppState, Transaction, Lot, ClosedTrade, Dividend, CorporateAction } from '../types';
+import type { AppState, Transaction, Lot, ClosedTrade, Dividend, CorporateAction, WatchlistEntry, Settings } from '../types';
+import { toExcelDateDisplay } from './dateUtils';
 
 export const getColLetter = (zeroIndex: number): string => {
   let result = '';
@@ -13,16 +14,11 @@ export const getColLetter = (zeroIndex: number): string => {
   return result;
 };
 
-// Formats a Date string or Object into "DD-MMM-YYYY" for Excel display
+// Formats a Date string or Object into "DD-MMM-YYYY" for Excel display (timezone-safe)
 export const formatExcelDate = (dateVal: string | Date | undefined): string => {
   if (!dateVal) return '';
-  const date = typeof dateVal === 'string' ? new Date(dateVal) : dateVal;
-  if (isNaN(date.getTime())) return String(dateVal);
-  const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-  const day = String(date.getDate()).padStart(2, '0');
-  const month = months[date.getMonth()];
-  const year = date.getFullYear();
-  return `${day}-${month}-${year}`;
+  const dateStr = typeof dateVal === 'string' ? dateVal : dateVal.toISOString().split('T')[0];
+  return toExcelDateDisplay(dateStr);
 };
 
 // Set printing page configuration
@@ -37,561 +33,1043 @@ export const applyPageSetup = (ws: ExcelJS.Worksheet) => {
   };
 };
 
+export interface ExportOptions {
+  format: 'multi-tab' | 'single-sheet';
+  includePerScriptSheets: boolean;
+  includeWatchlist: boolean;
+  includeTaxAnalysis: boolean;
+}
+
+const defaultExportOptions: ExportOptions = {
+  format: 'multi-tab',
+  includePerScriptSheets: true,
+  includeWatchlist: true,
+  includeTaxAnalysis: true
+};
+
 export const exportToExcel = async (
   state: AppState,
-  format: 'multi-tab' | 'single-sheet' = 'multi-tab',
-  _grouping: 'chronological' | 'scriptwise' = 'chronological'
+  optionsOrFormat?: ExportOptions | 'multi-tab' | 'single-sheet',
+  _ignoredGrouping?: 'chronological' | 'scriptwise'
 ): Promise<void> => {
+  let options: ExportOptions = { ...defaultExportOptions };
+  if (optionsOrFormat) {
+    if (typeof optionsOrFormat === 'string') {
+      options.format = optionsOrFormat;
+    } else {
+      options = { ...defaultExportOptions, ...optionsOrFormat };
+    }
+  }
+
   const wb = new ExcelJS.Workbook();
   wb.creator = 'LotLedger';
   wb.created = new Date();
 
-  const { transactions, lots, closedTrades, dividends, corporateActions, settings, activeProfile, profiles } = state;
+  // 1. Write hidden meta sheet
+  writeMetaSheet(wb, state, options);
 
-  // 1. Write metadata sheet (hidden)
-  const metaWs = wb.addWorksheet('_ProfileMeta');
-  metaWs.state = 'veryHidden';
-  metaWs.columns = [
-    { header: 'Key', key: 'key', width: 20 },
-    { header: 'Value', key: 'value', width: 40 }
-  ];
-  metaWs.addRow({ key: 'exportedProfile', value: activeProfile });
-  metaWs.addRow({ key: 'exportDate', value: new Date().toISOString() });
-  metaWs.addRow({ key: 'appVersion', value: '1.0.0' });
-  metaWs.addRow({ key: 'allProfiles', value: JSON.stringify(profiles) });
-  metaWs.addRow({
-    key: 'dataRowCounts',
-    value: JSON.stringify({
-      transactions: transactions.length,
-      lots: lots.length,
-      closedTrades: closedTrades.length,
-      dividends: dividends.length,
-      corporateActions: corporateActions.length,
-    })
-  });
+  // 2. Write Portfolio Summary
+  writePortfolioSummary(wb, state);
 
-  if (format === 'multi-tab') {
-    // -------------------------------------------------------------
-    // MULTI-TAB EXPORT FORMAT
-    // -------------------------------------------------------------
-    
-    // TAB 1: Portfolio Summary
-    const summaryWs = wb.addWorksheet('Portfolio Summary');
-    summaryWs.views = [{ showGridLines: true }];
-    
-    // Header Banner
-    summaryWs.mergeCells('A1:B1');
-    const headerCell = summaryWs.getCell('A1');
-    headerCell.value = 'Portfolio Summary';
-    headerCell.font = { name: 'Outfit', size: 16, bold: true, color: { argb: 'FFFFFFFF' } };
-    headerCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1E293B' } };
-    headerCell.alignment = { horizontal: 'center', vertical: 'middle' };
-    summaryWs.getRow(1).height = 30;
+  if (options.format === 'multi-tab') {
+    // 3. Write entities
+    writeTransactionsSheet(wb, state.transactions);
+    writeLotsSheet(wb, state.lots);
+    writeClosedTradesSheet(wb, state.closedTrades);
+    writeDividendsSheet(wb, state.dividends);
+    writeCorporateActionsSheet(wb, state.corporateActions);
 
-    // Metrics Rows
-    summaryWs.addRow(['Metric', 'Value']);
-    summaryWs.getRow(2).font = { bold: true };
-    summaryWs.getRow(2).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF1F5F9' } };
-
-    summaryWs.addRow(['Total Invested Capital (All Time)', { formula: '=SUMIF(Transactions!F:F,"BUY",Transactions!M:M)' }]);
-    summaryWs.addRow(['Current Value of Open Lots', { formula: '=SUBTOTAL(109,Lots!J:J)' }]);
-    summaryWs.addRow(['Total Realised Net Profit', { formula: '=SUBTOTAL(109,ClosedTrades!O:O)' }]);
-    summaryWs.addRow(['Total Dividends Received', { formula: '=SUBTOTAL(109,Dividends!F:F)' }]);
-    summaryWs.addRow(['Net Portfolio Profit (Realised + Divs)', { formula: '=B5+B6' }]);
-
-    // Format B3:B7
-    for (let r = 3; r <= 7; r++) {
-      summaryWs.getCell(`B${r}`).numFmt = '₹#,##0.00';
+    if (options.includeWatchlist) {
+      writeWatchlistSheet(wb, state.watchlist || []);
     }
-    summaryWs.getCell('A7').font = { bold: true };
-    summaryWs.getCell('B7').font = { bold: true };
+    writeSettingsSheet(wb, state.settings);
 
-    // Search Section
-    summaryWs.addRow([]);
-    summaryWs.addRow([]);
-    
-    summaryWs.mergeCells('A10:B10');
-    const searchHeader = summaryWs.getCell('A10');
-    searchHeader.value = 'Master Script Search';
-    searchHeader.font = { size: 12, bold: true, color: { argb: 'FFFFFFFF' } };
-    searchHeader.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1E3A5F' } };
-    searchHeader.alignment = { horizontal: 'center' };
-
-    summaryWs.addRow(['Enter Script Name:', 'RELIANCE']);
-    const inputCell = summaryWs.getCell('B11');
-    inputCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFFFC4' } }; // Yellow input
-    inputCell.font = { bold: true };
-    inputCell.border = {
-      top: { style: 'thick' },
-      left: { style: 'thick' },
-      bottom: { style: 'thick' },
-      right: { style: 'thick' }
-    };
-
-    summaryWs.addRow(['Invested Capital', { formula: '=SUMIFS(Transactions!M:M,Transactions!C:C,B11,Transactions!F:F,"BUY")' }]);
-    summaryWs.addRow(['Current Invested Value', { formula: '=SUMIFS(Lots!J:J,Lots!C:C,B11)' }]);
-    summaryWs.addRow(['Realised Net P&L', { formula: '=SUMIFS(ClosedTrades!O:O,ClosedTrades!C:C,B11)' }]);
-    summaryWs.addRow(['Dividends Received', { formula: '=SUMIFS(Dividends!F:F,Dividends!C:C,B11)' }]);
-    summaryWs.addRow(['Net Profit for Script', { formula: '=B14+B15' }]);
-
-    for (let r = 12; r <= 16; r++) {
-      summaryWs.getCell(`B${r}`).numFmt = '₹#,##0.00';
+    // 4. Per-script sheets
+    if (options.includePerScriptSheets) {
+      writeAllPerScriptSheets(wb, state);
     }
-    summaryWs.getCell('A16').font = { bold: true };
-    summaryWs.getCell('B16').font = { bold: true };
 
-    summaryWs.getColumn(1).width = 35;
-    summaryWs.getColumn(2).width = 25;
+    // 5. Tax Summary Analysis
+    if (options.includeTaxAnalysis) {
+      writeTaxSummarySheet(wb, state);
+    }
 
-    // Apply Sheet Color tab
-    summaryWs.properties.tabColor = { argb: 'FF1F2937' };
-
-    // Standard Multi-tab rendering function
-    const addTab = <T extends Record<string, any>>(
-      sheetName: string,
-      headers: (keyof T | string)[],
-      data: T[],
-      tabColorHex: string,
-      _entityName: string,
-      preProcessRow?: (row: T, index: number) => any[]
-    ) => {
-      const ws = wb.addWorksheet(sheetName);
-      ws.views = [{ state: 'frozen', ySplit: 1, showGridLines: true }];
-      ws.properties.tabColor = { argb: tabColorHex };
-
-      // Write Header Row
-      const headerRow = ws.addRow(headers.map(h => String(h)));
-      headerRow.font = { color: { argb: 'FFFFFFFF' }, bold: true };
-      headerRow.height = 24;
-      headerRow.eachCell(c => {
-        c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1F2937' } };
-        c.alignment = { vertical: 'middle' };
-      });
-
-      // Write Data Rows
-      data.forEach((item, idx) => {
-        let values: any[] = [];
-        if (preProcessRow) {
-          values = preProcessRow(item, idx);
-        } else {
-          values = headers.map(h => item[h as keyof T]);
-        }
-        const dataRow = ws.addRow(values);
-        dataRow.height = 20;
-
-        // Alternating row background
-        const rowBg = idx % 2 === 0 ? 'FFF8FAFC' : 'FFFFFFFF';
-        dataRow.eachCell(c => {
-          c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: rowBg } };
-          c.alignment = { vertical: 'middle' };
-        });
-      });
-
-      // Enable AutoFilter
-      ws.autoFilter = {
-        from: { row: 1, column: 1 },
-        to: { row: 1, column: headers.length }
-      };
-
-      // Set width configurations
-      headers.forEach((h, cIdx) => {
-        const col = ws.getColumn(cIdx + 1);
-        const headerLower = String(h).toLowerCase();
-        if (headerLower.includes('id')) col.width = 22;
-        else if (headerLower.includes('date')) col.width = 14;
-        else if (headerLower.includes('script') || headerLower.includes('symbol')) col.width = 16;
-        else if (headerLower.includes('exchange')) col.width = 10;
-        else if (headerLower.includes('type')) col.width = 10;
-        else if (headerLower.includes('qty') || headerLower.includes('quantity')) col.width = 12;
-        else if (headerLower.includes('price') || headerLower.includes('cost') || headerLower.includes('proceeds') || headerLower.includes('amount') || headerLower.includes('pnl')) col.width = 16;
-        else if (headerLower.includes('notes')) col.width = 30;
-        else col.width = 15;
-      });
-
-      applyPageSetup(ws);
-    };
-
-    // Render Transactions Tab
-    addTab<Transaction>(
-      'Transactions',
-      ['id', 'date', 'script', 'exchange', 'portfolio', 'type', 'quantity', 'price', 'brokerage', 'dpCharges', 'stt', 'gst', 'totalCost', 'notes'],
-      transactions,
-      'FF1D4ED8',
-      'Transactions',
-      (t) => [
-        t.id,
-        formatExcelDate(t.date),
-        t.script.toUpperCase(),
-        t.exchange,
-        t.portfolio,
-        t.type,
-        t.type === 'SELL' ? -Math.abs(t.quantity) : t.quantity, // SELL is negative in spreadsheet
-        t.price,
-        t.brokerage,
-        t.dpCharges,
-        t.stt,
-        t.gst,
-        t.totalCost,
-        t.notes
-      ]
-    );
-
-    // Render Lots Tab
-    addTab<Lot>(
-      'Lots',
-      ['id', 'buyTransactionId', 'script', 'exchange', 'portfolio', 'buyDate', 'buyPrice', 'originalQty', 'remainingQty', 'totalCost', 'currentPrice', 'notes'],
-      lots,
-      'FF15803D',
-      'Lots',
-      (l) => [
-        l.id,
-        l.buyTransactionId,
-        l.script.toUpperCase(),
-        l.exchange,
-        l.portfolio,
-        formatExcelDate(l.buyDate),
-        l.buyPrice,
-        l.originalQty,
-        l.remainingQty,
-        l.totalCost,
-        l.currentPrice !== undefined ? l.currentPrice : '',
-        l.notes
-      ]
-    );
-
-    // Render Closed Trades Tab
-    addTab<ClosedTrade>(
-      'ClosedTrades',
-      ['id', 'sellTransactionId', 'buyLotId', 'script', 'exchange', 'portfolio', 'buyDate', 'sellDate', 'buyPrice', 'sellPrice', 'qty', 'buyCost', 'sellProceeds', 'grossPnL', 'netPnL', 'holdingDays', 'isLTCG'],
-      closedTrades,
-      'FF92400E',
-      'ClosedTrades',
-      (ct) => [
-        ct.id,
-        ct.sellTransactionId,
-        ct.buyLotId,
-        ct.script.toUpperCase(),
-        ct.exchange,
-        ct.portfolio,
-        formatExcelDate(ct.buyDate),
-        formatExcelDate(ct.sellDate),
-        ct.buyPrice,
-        ct.sellPrice,
-        ct.qty,
-        ct.buyCost,
-        ct.sellProceeds,
-        ct.grossPnL,
-        ct.netPnL,
-        ct.holdingDays,
-        ct.isLTCG ? 'LTCG' : 'STCG' // Format boolean to text
-      ]
-    );
-
-    // Render Dividends Tab
-    addTab<Dividend>(
-      'Dividends',
-      ['id', 'date', 'script', 'qty', 'dividendPerShare', 'totalAmount', 'tds', 'netDividend'],
-      dividends,
-      'FF7E22CE',
-      'Dividends',
-      (d) => [
-        d.id,
-        formatExcelDate(d.date),
-        d.script.toUpperCase(),
-        d.qty,
-        d.dividendPerShare,
-        d.totalAmount,
-        d.tds,
-        d.totalAmount - d.tds
-      ]
-    );
-
-    // Render Corporate Actions Tab
-    addTab<CorporateAction>(
-      'CorporateActions',
-      ['id', 'date', 'script', 'type', 'ratio', 'parentSymbol', 'childSymbol', 'parentCostPercent', 'childCostPercent', 'issuePrice', 'applied', 'notes'],
-      corporateActions,
-      'FF0F766E',
-      'CorporateActions',
-      (ca) => [
-        ca.id,
-        formatExcelDate(ca.date),
-        ca.script.toUpperCase(),
-        ca.type,
-        ca.ratio || '',
-        ca.parentSymbol || '',
-        ca.childSymbol || '',
-        ca.parentCostPercent !== undefined ? ca.parentCostPercent : '',
-        ca.childCostPercent !== undefined ? ca.childCostPercent : '',
-        ca.issuePrice !== undefined ? ca.issuePrice : '',
-        ca.applied ? 'Applied' : 'Pending',
-        ca.notes
-      ]
-    );
-
-    // Render Settings Tab
-    const settingsWs = wb.addWorksheet('Settings');
-    settingsWs.views = [{ showGridLines: true }];
-    settingsWs.properties.tabColor = { argb: 'FF475569' };
-    settingsWs.columns = [
-      { header: 'Key', key: 'key', width: 35 },
-      { header: 'Value', key: 'value', width: 45 }
-    ];
-    settingsWs.getRow(1).font = { color: { argb: 'FFFFFFFF' }, bold: true };
-    settingsWs.getRow(1).eachCell(c => c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1F2937' } });
-
-    Object.entries(settings).forEach(([key, val]) => {
-      settingsWs.addRow({ key, value: typeof val === 'object' ? JSON.stringify(val) : val });
-    });
-    applyPageSetup(settingsWs);
-
-    // IMPORT AND EXECUTE ADVANCED FEATURES (Section 14.6)
+    // Advanced features
     try {
       const { applyAdvancedExcelFeatures } = await import('./excelAdvanced');
       await applyAdvancedExcelFeatures(wb, state);
     } catch (e) {
       console.warn('Advanced Excel features could not be applied or loaded:', e);
     }
-
   } else {
-    // -------------------------------------------------------------
-    // SINGLE SHEET EXPORT FORMAT
-    // -------------------------------------------------------------
-    const ws = wb.addWorksheet('AllData');
-    ws.views = [{ showGridLines: true }];
-    applyPageSetup(ws);
-
-    // Pre-allocated dashboard rows (1-21)
-    ws.mergeCells('A1:B1');
-    const headerCell = ws.getCell('A1');
-    headerCell.value = 'Portfolio Summary';
-    headerCell.font = { name: 'Outfit', size: 16, bold: true, color: { argb: 'FFFFFFFF' } };
-    headerCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1F2937' } };
-    headerCell.alignment = { horizontal: 'center', vertical: 'middle' };
-    ws.getRow(1).height = 30;
-
-    ws.addRow(['Metric', 'Value']);
-    ws.getRow(2).font = { bold: true };
-    ws.getRow(2).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF1F5F9' } };
-
-    ws.addRow(['Total Invested Capital (All Time)', '']);
-    ws.addRow(['Current Value of Open Lots', '']);
-    ws.addRow(['Total Realised Net Profit', '']);
-    ws.addRow(['Total Dividends Received', '']);
-    ws.addRow(['Net Portfolio Profit (Realised + Divs)', '']);
-    
-    // Format B3:B7
-    for (let r = 3; r <= 7; r++) {
-      ws.getCell(`B${r}`).numFmt = '₹#,##0.00';
-    }
-    ws.getCell('A7').font = { bold: true };
-    ws.getCell('B7').font = { bold: true };
-
-    // Search Section
-    ws.mergeCells('A10:B10');
-    const searchHeader = ws.getCell('A10');
-    searchHeader.value = 'Master Script Search';
-    searchHeader.font = { size: 12, bold: true, color: { argb: 'FFFFFFFF' } };
-    searchHeader.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1E3A5F' } };
-    searchHeader.alignment = { horizontal: 'center' };
-
-    ws.addRow(['Enter Script Name:', 'RELIANCE']);
-    const inputCell = ws.getCell('B11');
-    inputCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFFFC4' } }; // Yellow input
-    inputCell.font = { bold: true };
-    inputCell.border = {
-      top: { style: 'thick' }, left: { style: 'thick' }, bottom: { style: 'thick' }, right: { style: 'thick' }
-    };
-
-    ws.addRow(['Invested Capital', '']);
-    ws.addRow(['Current Invested Value', '']);
-    ws.addRow(['Realised Net P&L', '']);
-    ws.addRow(['Dividends Received', '']);
-    ws.addRow(['Net Profit for Script', '']);
-
-    for (let r = 12; r <= 16; r++) {
-      ws.getCell(`B${r}`).numFmt = '₹#,##0.00';
-    }
-    ws.getCell('A16').font = { bold: true };
-    ws.getCell('B16').font = { bold: true };
-
-    // Row 17-21 blank spacing
-    ws.addRow([]); ws.addRow([]); ws.addRow([]); ws.addRow([]); ws.addRow([]);
-
-    let currentRow = 22;
-    const ranges: Record<string, { start: number; end: number; headers: string[] }> = {};
-
-    const appendSection = <T extends Record<string, any>>(
-      sectionName: string,
-      headers: string[],
-      data: T[],
-      preProcessRow?: (row: T, idx: number) => any[]
-    ) => {
-      // 1. Title Row
-      ws.mergeCells(`A${currentRow}:N${currentRow}`);
-      const titleCell = ws.getCell(`A${currentRow}`);
-      titleCell.value = sectionName;
-      titleCell.font = { size: 14, bold: true, color: { argb: 'FFFFFFFF' } };
-      titleCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF166534' } }; // Dark green
-      titleCell.alignment = { vertical: 'middle' };
-      ws.getRow(currentRow).height = 24;
-      currentRow++;
-
-      // 2. Blank spacer row
-      const spacerRow = ws.addRow([]);
-      spacerRow.height = 6;
-      spacerRow.eachCell(c => c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF1F5F9' } });
-      currentRow++;
-
-      // 3. Headers row
-      const headerRow = ws.addRow(headers);
-      headerRow.font = { bold: true, color: { argb: 'FFFFFFFF' } };
-      headerRow.height = 20;
-      headerRow.eachCell(c => c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF374151' } }); // dark grey header
-      
-      const startDataRow = currentRow + 1;
-      currentRow++;
-
-      // 4. Data rows
-      if (data.length === 0) {
-        const noDataRow = ws.addRow(['No data']);
-        noDataRow.eachCell(c => c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFFFFF' } });
-        currentRow++;
-      } else {
-        data.forEach((item, idx) => {
-          let values: any[] = [];
-          if (preProcessRow) {
-            values = preProcessRow(item, idx);
-          } else {
-            values = headers.map(h => item[h]);
-          }
-          const dataRow = ws.addRow(values);
-          dataRow.height = 20;
-          const rowBg = idx % 2 === 0 ? 'FFF8FAFC' : 'FFFFFFFF';
-          dataRow.eachCell(c => {
-            c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: rowBg } };
-            c.alignment = { vertical: 'middle' };
-          });
-          currentRow++;
-        });
-      }
-
-      const endDataRow = currentRow - 1;
-
-      // 5. Grand Total row
-      const totalRowVal = Array(headers.length).fill('');
-      totalRowVal[0] = 'TOTAL';
-      const totalRow = ws.addRow(totalRowVal);
-      totalRow.font = { bold: true, color: { argb: 'FFFFFFFF' } };
-      totalRow.height = 22;
-      totalRow.eachCell(c => c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1F2937' } });
-
-      // Apply formulas on total row for columns that require sums
-      const sumCols = ['quantity', 'originalQty', 'remainingQty', 'qty', 'totalCost', 'buyCost', 'sellProceeds', 'grossPnL', 'netPnL', 'totalAmount', 'tds'];
-      headers.forEach((h, cIdx) => {
-        const colLetter = getColLetter(cIdx);
-        if (sumCols.includes(h) && data.length > 0) {
-          totalRow.getCell(cIdx + 1).value = { formula: `=SUM(${colLetter}${startDataRow}:${colLetter}${endDataRow})` };
-        }
-      });
-      currentRow++;
-
-      // Record range
-      ranges[sectionName] = {
-        start: startDataRow,
-        end: endDataRow,
-        headers
-      };
-
-      // 3 Blank rows
-      ws.addRow([]); ws.addRow([]); ws.addRow([]);
-      currentRow += 3;
-    };
-
-    // Stack sections
-    appendSection<Transaction>(
-      'Transactions',
-      ['id', 'date', 'script', 'exchange', 'portfolio', 'type', 'quantity', 'price', 'brokerage', 'dpCharges', 'stt', 'gst', 'totalCost', 'notes'],
-      transactions,
-      (t) => [t.id, formatExcelDate(t.date), t.script.toUpperCase(), t.exchange, t.portfolio, t.type, t.type === 'SELL' ? -Math.abs(t.quantity) : t.quantity, t.price, t.brokerage, t.dpCharges, t.stt, t.gst, t.totalCost, t.notes]
-    );
-
-    appendSection<Lot>(
-      'Lots',
-      ['id', 'buyTransactionId', 'script', 'exchange', 'portfolio', 'buyDate', 'buyPrice', 'originalQty', 'remainingQty', 'totalCost', 'currentPrice', 'notes'],
-      lots,
-      (l) => [l.id, l.buyTransactionId, l.script.toUpperCase(), l.exchange, l.portfolio, formatExcelDate(l.buyDate), l.buyPrice, l.originalQty, l.remainingQty, l.totalCost, l.currentPrice !== undefined ? l.currentPrice : '', l.notes]
-    );
-
-    appendSection<ClosedTrade>(
-      'ClosedTrades',
-      ['id', 'sellTransactionId', 'buyLotId', 'script', 'exchange', 'portfolio', 'buyDate', 'sellDate', 'buyPrice', 'sellPrice', 'qty', 'buyCost', 'sellProceeds', 'grossPnL', 'netPnL', 'holdingDays', 'isLTCG'],
-      closedTrades,
-      (ct) => [ct.id, ct.sellTransactionId, ct.buyLotId, ct.script.toUpperCase(), ct.exchange, ct.portfolio, formatExcelDate(ct.buyDate), formatExcelDate(ct.sellDate), ct.buyPrice, ct.sellPrice, ct.qty, ct.buyCost, ct.sellProceeds, ct.grossPnL, ct.netPnL, ct.holdingDays, ct.isLTCG ? 'LTCG' : 'STCG']
-    );
-
-    appendSection<Dividend>(
-      'Dividends',
-      ['id', 'date', 'script', 'qty', 'dividendPerShare', 'totalAmount', 'tds', 'netDividend'],
-      dividends,
-      (d) => [d.id, formatExcelDate(d.date), d.script.toUpperCase(), d.qty, d.dividendPerShare, d.totalAmount, d.tds, d.totalAmount - d.tds]
-    );
-
-    appendSection<CorporateAction>(
-      'CorporateActions',
-      ['id', 'date', 'script', 'type', 'ratio', 'parentSymbol', 'childSymbol', 'parentCostPercent', 'childCostPercent', 'issuePrice', 'applied', 'notes'],
-      corporateActions,
-      (ca) => [ca.id, formatExcelDate(ca.date), ca.script.toUpperCase(), ca.type, ca.ratio || '', ca.parentSymbol || '', ca.childSymbol || '', ca.parentCostPercent !== undefined ? ca.parentCostPercent : '', ca.childCostPercent !== undefined ? ca.childCostPercent : '', ca.issuePrice !== undefined ? ca.issuePrice : '', ca.applied ? 'Applied' : 'Pending', ca.notes]
-    );
-
-    // Apply Settings
-    ws.mergeCells(`A${currentRow}:B${currentRow}`);
-    const settingsTitle = ws.getCell(`A${currentRow}`);
-    settingsTitle.value = 'Settings';
-    settingsTitle.font = { size: 14, bold: true, color: { argb: 'FFFFFFFF' } };
-    settingsTitle.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF166534' } };
-    currentRow++;
-
-    ws.addRow(['Key', 'Value']);
-    ws.getRow(currentRow).font = { bold: true };
-    currentRow++;
-
-    Object.entries(settings).forEach(([key, val]) => {
-      ws.addRow([key, typeof val === 'object' ? JSON.stringify(val) : val]);
-      currentRow++;
-    });
-
-    // Helper to get Range address string for formulas
-    const getCRng = (sectionName: string, headerName: string): string => {
-      const r = ranges[sectionName];
-      if (!r) return '$A$1:$A$1';
-      const colLetter = getColLetter(r.headers.indexOf(headerName));
-      return `AllData!$${colLetter}$${r.start}:$${colLetter}$${r.end}`;
-    };
-
-    // Retroactively write dashboard formulas
-    ws.getCell('B3').value = { formula: `=SUMIF(${getCRng('Transactions', 'type')},"BUY",${getCRng('Transactions', 'totalCost')})` };
-    ws.getCell('B4').value = { formula: `=SUBTOTAL(109,${getCRng('Lots', 'totalCost')})` };
-    ws.getCell('B5').value = { formula: `=SUBTOTAL(109,${getCRng('ClosedTrades', 'netPnL')})` };
-    ws.getCell('B6').value = { formula: `=SUBTOTAL(109,${getCRng('Dividends', 'totalAmount')})` };
-
-    ws.getCell('B12').value = { formula: `=SUMIFS(${getCRng('Transactions', 'totalCost')},${getCRng('Transactions', 'script')},B11,${getCRng('Transactions', 'type')},"BUY")` };
-    ws.getCell('B13').value = { formula: `=SUMIFS(${getCRng('Lots', 'totalCost')},${getCRng('Lots', 'script')},B11)` };
-    ws.getCell('B14').value = { formula: `=SUMIFS(${getCRng('ClosedTrades', 'netPnL')},${getCRng('ClosedTrades', 'script')},B11)` };
-    ws.getCell('B15').value = { formula: `=SUMIFS(${getCRng('Dividends', 'totalAmount')},${getCRng('Dividends', 'script')},B11)` };
-
-    ws.getColumn(1).width = 25;
-    ws.getColumn(2).width = 20;
-    ws.getColumn(3).width = 16;
-    ws.getColumn(7).width = 14;
-    ws.getColumn(8).width = 14;
+    // Single sheet stacked
+    writeSingleSheet(wb, state, options);
   }
 
-  // Trigger file download
+  // Trigger download
   const buffer = await wb.xlsx.writeBuffer();
   const fileType = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
   const blob = new Blob([buffer], { type: fileType });
-  saveAs(blob, `LotLedger_Backup_${activeProfile}_${new Date().toISOString().split('T')[0]}.xlsx`);
+  saveAs(blob, `LotLedger_${state.activeProfile}_${new Date().toISOString().split('T')[0]}.xlsx`);
+};
+
+const getDaysDifference = (d1: string, d2: Date = new Date()): number => {
+  if (!d1) return 0;
+  const t1 = new Date(d1).getTime();
+  const t2 = d2.getTime();
+  if (isNaN(t1)) return 0;
+  return Math.max(0, Math.ceil((t2 - t1) / (1000 * 60 * 60 * 24)));
+};
+
+const addStandardSheet = <T extends Record<string, any>>(
+  wb: ExcelJS.Workbook,
+  sheetName: string,
+  headers: string[],
+  data: T[],
+  tabColorHex: string,
+  preProcessRow: (row: T, index: number) => any[]
+) => {
+  const ws = wb.addWorksheet(sheetName);
+  ws.views = [{ state: 'frozen', ySplit: 1, showGridLines: true }];
+  ws.properties.tabColor = { argb: tabColorHex };
+
+  // Write Header Row
+  const headerRow = ws.addRow(headers);
+  headerRow.font = { color: { argb: 'FFFFFFFF' }, bold: true };
+  headerRow.height = 24;
+  headerRow.eachCell(c => {
+    c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1F2937' } };
+    c.alignment = { vertical: 'middle' };
+  });
+
+  // Write Data Rows
+  data.forEach((item, idx) => {
+    const values = preProcessRow(item, idx);
+    const dataRow = ws.addRow(values);
+    dataRow.height = 20;
+
+    // Alternating row background
+    const rowBg = idx % 2 === 0 ? 'FFF8FAFC' : 'FFFFFFFF';
+    dataRow.eachCell((c) => {
+      c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: rowBg } };
+      c.alignment = { vertical: 'middle' };
+    });
+  });
+
+  // Enable AutoFilter
+  ws.autoFilter = {
+    from: { row: 1, column: 1 },
+    to: { row: 1, column: headers.length }
+  };
+
+  // Set Widths
+  headers.forEach((h, cIdx) => {
+    const col = ws.getColumn(cIdx + 1);
+    const hl = h.toLowerCase();
+    if (hl.includes('id')) col.width = 24;
+    else if (hl.includes('date')) col.width = 14;
+    else if (hl.includes('script') || hl.includes('symbol')) col.width = 16;
+    else if (hl.includes('exchange')) col.width = 10;
+    else if (hl.includes('type')) col.width = 12;
+    else if (hl.includes('qty') || hl.includes('quantity')) col.width = 12;
+    else if (hl.includes('price') || hl.includes('cost') || hl.includes('proceeds') || hl.includes('amount') || hl.includes('pnl') || hl.includes('value') || hl.includes('charges') || hl.includes('duty') || hl.includes('brokerage') || hl.includes('stt') || hl.includes('gst')) col.width = 16;
+    else if (hl.includes('notes') || hl.includes('brokername')) col.width = 30;
+    else col.width = 15;
+  });
+
+  applyPageSetup(ws);
+  return ws;
+};
+
+// WRITE META SHEET (Hidden)
+const writeMetaSheet = (wb: ExcelJS.Workbook, state: AppState, options: ExportOptions) => {
+  const ws = wb.addWorksheet('_Meta');
+  ws.state = 'veryHidden';
+  ws.columns = [
+    { header: 'Key', key: 'key', width: 20 },
+    { header: 'Value', key: 'value', width: 40 }
+  ];
+  ws.addRow({ key: 'appVersion', value: '1.2.0' });
+  ws.addRow({ key: 'exportedProfile', value: state.activeProfile });
+  ws.addRow({ key: 'exportDate', value: new Date().toISOString() });
+  ws.addRow({ key: 'allProfiles', value: JSON.stringify(state.profiles) });
+  ws.addRow({
+    key: 'dataRowCounts',
+    value: JSON.stringify({
+      transactions: state.transactions.length,
+      lots: state.lots.length,
+      closedTrades: state.closedTrades.length,
+      dividends: state.dividends.length,
+      corporateActions: state.corporateActions.length,
+      watchlist: state.watchlist ? state.watchlist.length : 0
+    })
+  });
+  ws.addRow({ key: 'exportFormat', value: options.format });
+};
+
+// WRITE PORTFOLIO SUMMARY SHEET
+const writePortfolioSummary = (wb: ExcelJS.Workbook, state: AppState) => {
+  const ws = wb.addWorksheet('Portfolio Summary');
+  ws.views = [{ showGridLines: true }];
+  ws.properties.tabColor = { argb: 'FF1F2937' };
+
+  // Banner
+  ws.mergeCells('A1:B1');
+  const banner = ws.getCell('A1');
+  banner.value = 'Portfolio Summary';
+  banner.font = { name: 'Outfit', size: 16, bold: true, color: { argb: 'FFFFFFFF' } };
+  banner.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1E293B' } };
+  banner.alignment = { horizontal: 'center', vertical: 'middle' };
+  ws.getRow(1).height = 30;
+
+  // Header Row
+  ws.addRow(['Metric', 'Value']);
+  ws.getRow(2).font = { bold: true };
+  ws.getRow(2).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF1F5F9' } };
+
+  // KPIs
+  ws.addRow(['Total Capital Deployed (BUY side)', { formula: '=SUMIF(Transactions!F:F,"BUY",Transactions!R:R)' }]);
+  ws.addRow(['Total Cost of Open Lots', { formula: '=SUMIF(Lots!J:J,">"&0,Lots!K:K)' }]);
+  ws.addRow(['Total Realised Net P&L', { formula: '=SUMIF(ClosedTrades!Q:Q,"<>"&"",ClosedTrades!Q:Q)' }]);
+  ws.addRow(['Total STCG', { formula: '=SUMIF(ClosedTrades!R:R,"STCG",ClosedTrades!Q:Q)' }]);
+  ws.addRow(['Total LTCG', { formula: '=SUMIF(ClosedTrades!R:R,"LTCG",ClosedTrades!Q:Q)' }]);
+  ws.addRow(['Total Dividends Received', { formula: '=SUM(Dividends!L:L)' }]);
+
+  // Style B3:B8 as Currency
+  for (let r = 3; r <= 8; r++) {
+    ws.getCell(`B${r}`).numFmt = '₹#,##0.00';
+  }
+
+  // Spacing
+  ws.addRow([]);
+  ws.addRow([]);
+
+  // Script Search Box (rows 11-16)
+  ws.mergeCells('A11:B11');
+  const searchHeader = ws.getCell('A11');
+  searchHeader.value = 'Script Lookup';
+  searchHeader.font = { name: 'Outfit', size: 12, bold: true, color: { argb: 'FFFFFFFF' } };
+  searchHeader.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1E3A5F' } };
+  searchHeader.alignment = { horizontal: 'center', vertical: 'middle' };
+  ws.getRow(11).height = 24;
+
+  const firstScript = state.transactions.length > 0 ? state.transactions[0].script.toUpperCase() : 'RELIANCE';
+
+  ws.addRow(['Enter Script Name:', firstScript]);
+  const inputCell = ws.getCell('B12');
+  inputCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFFFC4' } }; // Soft yellow input
+  inputCell.font = { bold: true };
+  inputCell.alignment = { horizontal: 'center' };
+  inputCell.border = {
+    top: { style: 'thick', color: { argb: 'FF1E3A5F' } },
+    left: { style: 'thick', color: { argb: 'FF1E3A5F' } },
+    bottom: { style: 'thick', color: { argb: 'FF1E3A5F' } },
+    right: { style: 'thick', color: { argb: 'FF1E3A5F' } }
+  };
+
+  ws.addRow(['Invested Capital', { formula: '=SUMIFS(Transactions!R:R, Transactions!C:C, B12, Transactions!F:F, "BUY")' }]);
+  ws.addRow(['Open Lots Cost', { formula: '=SUMIFS(Lots!K:K, Lots!C:C, B12)' }]);
+  ws.addRow(['Realised Net P&L', { formula: '=SUMIFS(ClosedTrades!Q:Q, ClosedTrades!D:D, B12)' }]);
+  ws.addRow(['Dividends Received', { formula: '=SUMIFS(Dividends!L:L, Dividends!E:E, B12)' }]);
+
+  // Style B13:B16 as Currency
+  for (let r = 13; r <= 16; r++) {
+    ws.getCell(`B${r}`).numFmt = '₹#,##0.00';
+  }
+
+  ws.getColumn(1).width = 38;
+  ws.getColumn(2).width = 25;
+
+  applyPageSetup(ws);
+};
+
+// WRITE TRANSACTIONS SHEET
+const writeTransactionsSheet = (wb: ExcelJS.Workbook, data: Transaction[]) => {
+  const headers = [
+    'id', 'date', 'script', 'exchange', 'portfolio', 'type', 'tradeType',
+    'quantity', 'price', 'grossValue', 'brokerage', 'stt', 'exchangeCharges',
+    'sebiCharges', 'stampDuty', 'dpCharges', 'gst', 'totalCost',
+    'brokerName', 'orderId', 'importSource', 'notes'
+  ];
+  addStandardSheet<Transaction>(wb, 'Transactions', headers, data, 'FF1D4ED8', (t) => [
+    t.id,
+    toExcelDateDisplay(t.date),
+    t.script.toUpperCase(),
+    t.exchange,
+    t.portfolio,
+    t.type,
+    t.tradeType || 'DELIVERY',
+    t.type === 'SELL' ? -Math.abs(t.quantity) : t.quantity,
+    t.price,
+    t.grossValue !== undefined ? t.grossValue : (t.quantity * t.price),
+    t.brokerage,
+    t.stt,
+    t.exchangeCharges || 0,
+    t.sebiCharges || 0,
+    t.stampDuty || 0,
+    t.dpCharges,
+    t.gst,
+    t.totalCost,
+    t.brokerName || '',
+    t.orderId || '',
+    t.importSource || 'EXCEL',
+    t.notes
+  ]);
+};
+
+// WRITE LOTS SHEET
+const writeLotsSheet = (wb: ExcelJS.Workbook, data: Lot[]) => {
+  const headers = [
+    'id', 'buyTransactionId', 'script', 'exchange', 'portfolio', 'buyDate',
+    'buyPrice', 'avgBuyPrice', 'originalQty', 'remainingQty', 'totalCost',
+    'targetPrice', 'stopLossPrice', 'isin', 'sector', 'currentPrice',
+    'unrealisedPnL', 'unrealisedPnLPct', 'notes'
+  ];
+  addStandardSheet<Lot>(wb, 'Lots', headers, data, 'FF15803D', (l, idx) => {
+    const r = idx + 2;
+    return [
+      l.id,
+      l.buyTransactionId,
+      l.script.toUpperCase(),
+      l.exchange,
+      l.portfolio,
+      toExcelDateDisplay(l.buyDate),
+      l.buyPrice,
+      l.avgBuyPrice !== undefined ? l.avgBuyPrice : l.buyPrice,
+      l.originalQty,
+      l.remainingQty,
+      l.totalCost,
+      l.targetPrice !== undefined ? l.targetPrice : '',
+      l.stopLossPrice !== undefined ? l.stopLossPrice : '',
+      l.isin || '',
+      l.sector || '',
+      l.currentPrice !== undefined ? l.currentPrice : '',
+      { formula: `=IF(P${r}>0,(P${r}-H${r})*J${r},"")` },
+      { formula: `=IF(K${r}>0,Q${r}/K${r}*100,"")` },
+      l.notes
+    ];
+  });
+};
+
+// WRITE CLOSED TRADES SHEET
+const writeClosedTradesSheet = (wb: ExcelJS.Workbook, data: ClosedTrade[]) => {
+  const headers = [
+    'id', 'sellTransactionId', 'buyLotId', 'script', 'exchange', 'portfolio',
+    'buyDate', 'sellDate', 'buyPrice', 'sellPrice', 'qty', 'buyCost',
+    'buyCharges', 'sellProceeds', 'sellCharges', 'grossPnL', 'netPnL',
+    'capitalGainType', 'taxableGain', 'holdingDays', 'isLTCG'
+  ];
+  addStandardSheet<ClosedTrade>(wb, 'ClosedTrades', headers, data, 'FF92400E', (ct) => [
+    ct.id,
+    ct.sellTransactionId,
+    ct.buyLotId,
+    ct.script.toUpperCase(),
+    ct.exchange,
+    ct.portfolio,
+    toExcelDateDisplay(ct.buyDate),
+    toExcelDateDisplay(ct.sellDate),
+    ct.buyPrice,
+    ct.sellPrice,
+    ct.qty,
+    ct.buyCost,
+    ct.buyCharges || 0,
+    ct.sellProceeds,
+    ct.sellCharges || 0,
+    ct.grossPnL,
+    ct.netPnL,
+    ct.capitalGainType || (ct.isLTCG ? 'LTCG' : 'STCG'),
+    ct.taxableGain !== undefined ? ct.taxableGain : '',
+    ct.holdingDays,
+    ct.isLTCG ? 'LTCG' : 'STCG'
+  ]);
+};
+
+// WRITE DIVIDENDS SHEET
+const writeDividendsSheet = (wb: ExcelJS.Workbook, data: Dividend[]) => {
+  const headers = [
+    'id', 'date', 'recordDate', 'exDividendDate', 'script', 'portfolio',
+    'dividendType', 'qty', 'dividendPerShare', 'totalAmount', 'tds', 'netDividend', 'notes'
+  ];
+  addStandardSheet<Dividend>(wb, 'Dividends', headers, data, 'FF7E22CE', (d) => [
+    d.id,
+    toExcelDateDisplay(d.date),
+    d.recordDate ? toExcelDateDisplay(d.recordDate) : '',
+    d.exDividendDate ? toExcelDateDisplay(d.exDividendDate) : '',
+    d.script.toUpperCase(),
+    d.portfolio || 'Default',
+    d.dividendType || 'FINAL',
+    d.qty,
+    d.dividendPerShare,
+    d.totalAmount,
+    d.tds || 0,
+    d.netDividend !== undefined ? d.netDividend : (d.totalAmount - (d.tds || 0)),
+    d.notes || ''
+  ]);
+};
+
+// WRITE CORPORATE ACTIONS SHEET
+const writeCorporateActionsSheet = (wb: ExcelJS.Workbook, data: CorporateAction[]) => {
+  const headers = [
+    'id', 'date', 'script', 'type', 'ratio', 'parentSymbol', 'childSymbol',
+    'parentCostPercent', 'childCostPercent', 'issuePrice', 'applied', 'notes'
+  ];
+  addStandardSheet<CorporateAction>(wb, 'CorporateActions', headers, data, 'FF0F766E', (ca) => [
+    ca.id,
+    toExcelDateDisplay(ca.date),
+    ca.script.toUpperCase(),
+    ca.type,
+    ca.ratio || '',
+    ca.parentSymbol || '',
+    ca.childSymbol || '',
+    ca.parentCostPercent !== undefined ? ca.parentCostPercent : '',
+    ca.childCostPercent !== undefined ? ca.childCostPercent : '',
+    ca.issuePrice !== undefined ? ca.issuePrice : '',
+    ca.applied ? 'Applied' : 'Pending',
+    ca.notes
+  ]);
+};
+
+// WRITE WATCHLIST SHEET
+const writeWatchlistSheet = (wb: ExcelJS.Workbook, data: WatchlistEntry[]) => {
+  const headers = [
+    'id', 'script', 'exchange', 'targetPrice', 'stopLossPrice',
+    'alertType', 'addedDate', 'sector', 'notes'
+  ];
+  addStandardSheet<WatchlistEntry>(wb, 'Watchlist', headers, data || [], 'FF6366F1', (w) => [
+    w.id,
+    w.script.toUpperCase(),
+    w.exchange || 'NSE',
+    w.targetPrice !== null && w.targetPrice !== undefined ? w.targetPrice : '',
+    w.stopLossPrice !== undefined ? w.stopLossPrice : '',
+    w.alertType || 'NONE',
+    w.addedDate ? toExcelDateDisplay(w.addedDate) : '',
+    w.sector || '',
+    w.notes || ''
+  ]);
+};
+
+// WRITE SETTINGS SHEET
+const writeSettingsSheet = (wb: ExcelJS.Workbook, data: Settings) => {
+  const ws = wb.addWorksheet('Settings');
+  ws.views = [{ showGridLines: true }];
+  ws.properties.tabColor = { argb: 'FF475569' };
+  ws.columns = [
+    { header: 'Key', key: 'key', width: 35 },
+    { header: 'Value', key: 'value', width: 45 }
+  ];
+  ws.getRow(1).font = { color: { argb: 'FFFFFFFF' }, bold: true };
+  ws.getRow(1).eachCell(c => c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1F2937' } });
+
+  Object.entries(data).forEach(([key, val]) => {
+    ws.addRow({ key, value: typeof val === 'object' ? JSON.stringify(val) : val });
+  });
+
+  applyPageSetup(ws);
+};
+
+// WRITE ALL PER SCRIPT SHEETS
+const writeAllPerScriptSheets = (wb: ExcelJS.Workbook, state: AppState) => {
+  const { lots, closedTrades, dividends, watchlist, corporateActions } = state;
+
+  const scripts = Array.from(new Set([
+    ...lots.map(l => l.script.toUpperCase()),
+    ...closedTrades.map(ct => ct.script.toUpperCase())
+  ])).sort();
+
+  const colorsRotation = ['FF1D4ED8', 'FF15803D', 'FF92400E', 'FF7E22CE', 'FF0F766E'];
+
+  scripts.forEach((scriptName, index) => {
+    const tabColor = colorsRotation[index % colorsRotation.length];
+    const scriptLots = lots.filter(l => l.script.toUpperCase() === scriptName);
+    const scriptClosed = closedTrades.filter(ct => ct.script.toUpperCase() === scriptName);
+    const scriptDivs = dividends.filter(d => d.script.toUpperCase() === scriptName);
+    const scriptWl = watchlist ? watchlist.find(w => w.script.toUpperCase() === scriptName) : undefined;
+    const scriptCa = corporateActions ? corporateActions.filter(ca => ca.script.toUpperCase() === scriptName) : [];
+
+    const ws = wb.addWorksheet(`[${scriptName}]`);
+    ws.views = [{ showGridLines: true }];
+    ws.properties.tabColor = { argb: tabColor };
+
+    // Section 1 — Script Header Banner (Row 1)
+    ws.mergeCells('A1:P1');
+    const banner = ws.getCell('A1');
+    banner.value = `${scriptName} Stock Analytics`;
+    banner.font = { name: 'Outfit', size: 16, bold: true, color: { argb: 'FFFFFFFF' } };
+    banner.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: tabColor } };
+    banner.alignment = { horizontal: 'center', vertical: 'middle' };
+    ws.getRow(1).height = 30;
+
+    // Section 2 — Key Metrics Cards (Rows 3–13)
+    const openQty = scriptLots.reduce((acc, l) => acc + l.remainingQty, 0);
+    const totalCostInvested = scriptLots.reduce((acc, l) => acc + l.totalCost, 0);
+    const avgBuyPrice = openQty > 0 ? totalCostInvested / openQty : 0;
+
+    const targetPrice = scriptWl?.targetPrice ?? 0;
+    const stopLossPrice = scriptWl?.stopLossPrice ?? 0;
+    const realisedPnL = scriptClosed.reduce((acc, ct) => acc + ct.netPnL, 0);
+    const totalDividends = scriptDivs.reduce((acc, d) => acc + (d.netDividend !== undefined ? d.netDividend : (d.totalAmount - (d.tds || 0))), 0);
+
+    let daysSinceEarliestBuy = 0;
+    let daysToLTCGEarliest = 0;
+    if (scriptLots.length > 0) {
+      const earliestLot = scriptLots.reduce((oldest, current) => {
+        return new Date(current.buyDate) < new Date(oldest.buyDate) ? current : oldest;
+      }, scriptLots[0]);
+      const earliestHeld = getDaysDifference(earliestLot.buyDate);
+      daysSinceEarliestBuy = earliestHeld;
+      daysToLTCGEarliest = Math.max(0, 365 - earliestHeld);
+    }
+
+    const stcgRealised = scriptClosed.filter(ct => ct.capitalGainType === 'STCG' || (!ct.capitalGainType && !ct.isLTCG)).reduce((acc, ct) => acc + ct.netPnL, 0);
+    const ltcgRealised = scriptClosed.filter(ct => ct.capitalGainType === 'LTCG' || (!ct.capitalGainType && ct.isLTCG)).reduce((acc, ct) => acc + ct.netPnL, 0);
+
+    ws.addRow([]); // Row 2 spacer
+    ws.addRow(['Open Quantity', `${openQty} shares`]);
+    ws.addRow(['Average Buy Price', avgBuyPrice]);
+    ws.addRow(['Total Cost Invested', totalCostInvested]);
+    ws.addRow(['Target Price', targetPrice || '']);
+    ws.addRow(['Stop Loss Price', stopLossPrice || '']);
+    ws.addRow(['Realised Net P&L', realisedPnL]);
+    ws.addRow(['Total Dividends', totalDividends]);
+    ws.addRow(['Days Since Earliest Buy', `${daysSinceEarliestBuy} days`]);
+    ws.addRow(['Days to LTCG (Earliest Lot)', daysToLTCGEarliest === 0 ? 'Already LTCG' : `${daysToLTCGEarliest} days`]);
+    ws.addRow(['STCG Realised', stcgRealised]);
+    ws.addRow(['LTCG Realised', ltcgRealised]);
+
+    // Style Metrics Block
+    const metricRows = Array.from({ length: 11 }, (_, i) => i + 3);
+    metricRows.forEach((r) => {
+      const labelCell = ws.getCell(`A${r}`);
+      const valCell = ws.getCell(`B${r}`);
+      labelCell.font = { bold: true };
+      valCell.alignment = { horizontal: 'left' };
+      const label = String(labelCell.value);
+
+      if (label.includes('Price') || label.includes('Cost') || label.includes('P&L') || label.includes('Dividends') || label.includes('Realised')) {
+        const val = valCell.value;
+        if (typeof val === 'number') {
+          valCell.numFmt = '₹#,##0.00';
+        }
+      }
+
+      // Card Background Colors
+      if (label.includes('Invested')) valCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFEBF5FF' } };
+      if (label.includes('Open Quantity')) valCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFEAF7ED' } };
+      if (label.includes('P&L') || label.includes('Realised')) {
+        const pnlVal = label.includes('STCG') ? stcgRealised : label.includes('LTCG') ? ltcgRealised : realisedPnL;
+        const bg = pnlVal >= 0 ? 'FFEAF7ED' : 'FFFDF2F2';
+        valCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: bg } };
+      }
+      if (label.includes('Dividends')) valCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF3E8FF' } };
+    });
+
+    ws.addRow([]); // Row 14 spacer
+    ws.addRow([]); // Row 15 spacer
+
+    let curRow = 16;
+
+    // Table Appender Block
+    const addBlock = (title: string, headers: string[], items: any[][], formatRow?: (rowCell: ExcelJS.Cell, colName: string, val: any) => void) => {
+      ws.mergeCells(`A${curRow}:P${curRow}`);
+      const headerCell = ws.getCell(`A${curRow}`);
+      headerCell.value = title;
+      headerCell.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+      headerCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1F2937' } };
+      ws.getRow(curRow).height = 22;
+      curRow++;
+
+      const headerRow = ws.addRow(headers);
+      headerRow.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+      headerRow.eachCell(c => c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF374151' } });
+      curRow++;
+
+      if (items.length === 0) {
+        const noDataRow = ws.addRow(['No records found.']);
+        noDataRow.eachCell(c => c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFFFFF' } });
+        curRow++;
+      } else {
+        items.forEach((rVals, idx) => {
+          const dataRow = ws.addRow(rVals);
+          const bg = idx % 2 === 0 ? 'FFF8FAFC' : 'FFFFFFFF';
+          dataRow.eachCell((c, colNum) => {
+            c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: bg } };
+            const head = headers[colNum - 1];
+            if (head && (head.toLowerCase().includes('price') || head.toLowerCase().includes('cost') || head.toLowerCase().includes('pnl') || head.toLowerCase().includes('proceeds') || head.toLowerCase().includes('amount') || head.toLowerCase().includes('tds') || head.toLowerCase().includes('charges'))) {
+              if (typeof c.value === 'number') {
+                c.numFmt = '₹#,##0.00';
+              }
+            }
+            if (head && (head.toLowerCase().includes('qty') || head.toLowerCase().includes('quantity') || head.toLowerCase().includes('days'))) {
+              if (typeof c.value === 'number') {
+                c.numFmt = '#,##0';
+              }
+            }
+            if (formatRow) {
+              formatRow(c, head, c.value);
+            }
+          });
+          curRow++;
+        });
+      }
+      ws.addRow([]);
+      ws.addRow([]);
+      curRow += 2;
+    };
+
+    // Lots
+    addBlock(
+      'Open Positions (Lots)',
+      ['Lot ID', 'Portfolio', 'Buy Date', 'Buy Price', 'Avg Price', 'Qty (Original)', 'Qty (Remaining)', 'Total Cost', 'Target Price', 'Stop Loss', 'Days Held', 'Days to LTCG', 'Notes'],
+      scriptLots.map(l => {
+        const daysHeld = getDaysDifference(l.buyDate);
+        const daysToLtcg = Math.max(0, 365 - daysHeld);
+        return [
+          l.id,
+          l.portfolio,
+          toExcelDateDisplay(l.buyDate),
+          l.buyPrice,
+          l.avgBuyPrice !== undefined ? l.avgBuyPrice : l.buyPrice,
+          l.originalQty,
+          l.remainingQty,
+          l.totalCost,
+          l.targetPrice || '',
+          l.stopLossPrice || '',
+          daysHeld,
+          daysToLtcg === 0 ? 'Already LTCG' : daysToLtcg,
+          l.notes
+        ];
+      }),
+      (c, head, val) => {
+        if (head === 'Days to LTCG' && typeof val === 'number' && val > 0 && val < 30) {
+          c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFEF3C7' } }; // Amber warn
+        }
+      }
+    );
+
+    // Closed Trades
+    addBlock(
+      'Closed Trades History',
+      ['Trade ID', 'Portfolio', 'Buy Date', 'Sell Date', 'Qty', 'Buy Price', 'Sell Price', 'Buy Cost', 'Net Proceeds', 'Gross P&L', 'Net P&L', 'Gain Type', 'Holding Days'],
+      scriptClosed.map(ct => [
+        ct.id,
+        ct.portfolio,
+        toExcelDateDisplay(ct.buyDate),
+        toExcelDateDisplay(ct.sellDate),
+        ct.qty,
+        ct.buyPrice,
+        ct.sellPrice,
+        ct.buyCost,
+        ct.sellProceeds,
+        ct.grossPnL,
+        ct.netPnL,
+        ct.capitalGainType || (ct.isLTCG ? 'LTCG' : 'STCG'),
+        ct.holdingDays
+      ]),
+      (c, head, val) => {
+        if (head === 'Net P&L' && typeof val === 'number') {
+          c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: val >= 0 ? 'FFEAF7ED' : 'FFFDF2F2' } };
+        }
+      }
+    );
+
+    // Dividends
+    addBlock(
+      'Dividend Receipts',
+      ['Div ID', 'Payment Date', 'Type', 'Qty', 'Div/Share', 'Gross Amount', 'TDS', 'Net Received'],
+      scriptDivs.map(d => [
+        d.id,
+        toExcelDateDisplay(d.date),
+        d.dividendType || 'FINAL',
+        d.qty,
+        d.dividendPerShare,
+        d.totalAmount,
+        d.tds || 0,
+        d.netDividend !== undefined ? d.netDividend : (d.totalAmount - (d.tds || 0))
+      ])
+    );
+
+    // Corporate Actions
+    addBlock(
+      'Corporate Actions History',
+      ['CA ID', 'Date', 'Type', 'Ratio', 'Applied'],
+      scriptCa.map(ca => [
+        ca.id,
+        toExcelDateDisplay(ca.date),
+        ca.type,
+        ca.ratio || '',
+        ca.applied ? 'Applied' : 'Pending'
+      ])
+    );
+
+    ws.getColumn(1).width = 28;
+    ws.getColumn(2).width = 14;
+    ws.getColumn(3).width = 14;
+    ws.getColumn(4).width = 14;
+    ws.getColumn(5).width = 14;
+    ws.getColumn(6).width = 16;
+    ws.getColumn(7).width = 16;
+    ws.getColumn(8).width = 16;
+    ws.getColumn(9).width = 16;
+    ws.getColumn(10).width = 16;
+    ws.getColumn(11).width = 14;
+    ws.getColumn(12).width = 16;
+
+    applyPageSetup(ws);
+  });
+};
+
+// WRITE TAX SUMMARY SHEET
+const writeTaxSummarySheet = (wb: ExcelJS.Workbook, state: AppState) => {
+  const { closedTrades, dividends } = state;
+
+  const ws = wb.addWorksheet('Tax Summary');
+  ws.views = [{ showGridLines: true }];
+  ws.properties.tabColor = { argb: 'FF020617' };
+
+  ws.mergeCells('A1:D1');
+  const banner = ws.getCell('A1');
+  banner.value = 'Financial Year Tax Analysis Summary';
+  banner.font = { name: 'Outfit', size: 16, bold: true, color: { argb: 'FFFFFFFF' } };
+  banner.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF0F172A' } };
+  banner.alignment = { horizontal: 'center', vertical: 'middle' };
+  ws.getRow(1).height = 30;
+
+  const getFY = (dateStr: string): string => {
+    if (!dateStr) return 'Unknown';
+    const date = new Date(dateStr);
+    if (isNaN(date.getTime())) return 'Unknown';
+    const year = date.getFullYear();
+    const month = date.getMonth();
+    if (month >= 3) {
+      return `${year}-${(year + 1).toString().slice(2)}`;
+    } else {
+      return `${year - 1}-${year.toString().slice(2)}`;
+    }
+  };
+
+  const fyrs = new Set<string>();
+  closedTrades.forEach(ct => fyrs.add(getFY(ct.sellDate)));
+  dividends.forEach(d => fyrs.add(getFY(d.date)));
+
+  const fyList = Array.from(fyrs).filter(fy => fy !== 'Unknown').sort().reverse();
+
+  let curRow = 3;
+
+  if (fyList.length === 0) {
+    ws.addRow([]);
+    ws.addRow(['No closed trades or dividends available to compute tax analysis.']);
+    ws.getCell(`A4`).font = { italic: true };
+    return;
+  }
+
+  fyList.forEach((fy) => {
+    ws.mergeCells(`A${curRow}:D${curRow}`);
+    const fyHeader = ws.getCell(`A${curRow}`);
+    fyHeader.value = `Financial Year: 20${fy}`;
+    fyHeader.font = { name: 'Outfit', size: 12, bold: true, color: { argb: 'FFFFFFFF' } };
+    fyHeader.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1E3A5F' } };
+    fyHeader.alignment = { horizontal: 'center', vertical: 'middle' };
+    ws.getRow(curRow).height = 24;
+    curRow++;
+
+    ws.addRow(['Metric', 'Category', 'Calculation / Status', 'Value']);
+    ws.getRow(curRow).font = { bold: true };
+    ws.getRow(curRow).eachCell(c => c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF1F5F9' } });
+    curRow++;
+
+    const fyClosed = closedTrades.filter(ct => getFY(ct.sellDate) === fy);
+    const fyDivs = dividends.filter(d => getFY(d.date) === fy);
+
+    const stcgRealised = fyClosed.filter(ct => ct.capitalGainType === 'STCG' || (!ct.capitalGainType && !ct.isLTCG)).reduce((acc, ct) => acc + ct.netPnL, 0);
+    const ltcgRealised = fyClosed.filter(ct => ct.capitalGainType === 'LTCG' || (!ct.capitalGainType && ct.isLTCG)).reduce((acc, ct) => acc + ct.netPnL, 0);
+    const stcgTax = Math.max(0, stcgRealised) * 0.20;
+
+    const taxableLTCG = Math.max(0, ltcgRealised - 125000);
+    const ltcgTax = taxableLTCG * 0.125;
+
+    const grossDiv = fyDivs.reduce((acc, d) => acc + d.totalAmount, 0);
+    const tds = fyDivs.reduce((acc, d) => acc + (d.tds || 0), 0);
+    const netDiv = grossDiv - tds;
+
+    const totalTax = stcgTax + ltcgTax;
+
+    ws.addRow(['STCG Realised Net Profit', 'Short Term Capital Gains', 'Held < 1 Year', stcgRealised]);
+    ws.addRow(['Estimated STCG Tax (20%)', 'STCG Tax', '20% of net profits', stcgTax]);
+    ws.addRow(['LTCG Realised Net Profit', 'Long Term Capital Gains', 'Held >= 1 Year', ltcgRealised]);
+    ws.addRow(['LTCG Exemption Limit Deduction', 'LTCG Deduction', 'Exempt up to 1.25 Lakhs', Math.min(Math.max(0, ltcgRealised), 125000)]);
+    ws.addRow(['Taxable LTCG Amount', 'LTCG Taxable', 'Gains above 1.25 Lakhs', taxableLTCG]);
+    ws.addRow(['Estimated LTCG Tax (12.5%)', 'LTCG Tax', '12.5% on taxable amount', ltcgTax]);
+    ws.addRow(['Dividend Gross Income', 'Dividend Income', 'Taxable at slab rates', grossDiv]);
+    ws.addRow(['TDS Withheld on Dividends', 'TDS', 'Tax Deducted at Source', tds]);
+    ws.addRow(['Net Dividend In-hand', 'Dividend Net', 'Deposited in bank', netDiv]);
+    ws.addRow(['Total Estimated Tax Liability', 'Total Estimated Tax', 'STCG + LTCG taxes', totalTax]);
+
+    const startR = curRow;
+    const endR = curRow + 9;
+    for (let r = startR; r <= endR; r++) {
+      const metricLabel = String(ws.getCell(`A${r}`).value);
+      const valCell = ws.getCell(`D${r}`);
+      valCell.numFmt = '₹#,##0.00';
+      valCell.font = { bold: true };
+
+      if (metricLabel.includes('Liability')) {
+        ws.getRow(r).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFEE2E2' } };
+        valCell.font = { size: 11, bold: true, color: { argb: 'FFB91C1C' } };
+      }
+    }
+
+    curRow += 10;
+    ws.addRow([]);
+    ws.addRow([]);
+    curRow += 2;
+  });
+
+  ws.getColumn(1).width = 35;
+  ws.getColumn(2).width = 25;
+  ws.getColumn(3).width = 25;
+  ws.getColumn(4).width = 20;
+
+  applyPageSetup(ws);
+};
+
+// WRITE SINGLE SHEET STACKED WORKBOOK
+const writeSingleSheet = (wb: ExcelJS.Workbook, state: AppState, options: ExportOptions) => {
+  const ws = wb.addWorksheet('AllData');
+  ws.views = [{ showGridLines: true }];
+  applyPageSetup(ws);
+
+  // Dashboard Rows (1-20)
+  ws.mergeCells('A1:B1');
+  const headerCell = ws.getCell('A1');
+  headerCell.value = 'Portfolio Summary';
+  headerCell.font = { name: 'Outfit', size: 16, bold: true, color: { argb: 'FFFFFFFF' } };
+  headerCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1F2937' } };
+  headerCell.alignment = { horizontal: 'center', vertical: 'middle' };
+  ws.getRow(1).height = 30;
+
+  ws.addRow(['Metric', 'Value']);
+  ws.getRow(2).font = { bold: true };
+  ws.getRow(2).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF1F5F9' } };
+
+  ws.addRow(['Total Deployed Capital (BUY side)', '']);
+  ws.addRow(['Current Cost of Open Lots', '']);
+  ws.addRow(['Total Realised Net Profit', '']);
+  ws.addRow(['Total Dividends Received', '']);
+  ws.addRow(['Net Portfolio Profit (Realised + Divs)', '']);
+
+  for (let r = 3; r <= 7; r++) {
+    ws.getCell(`B${r}`).numFmt = '₹#,##0.00';
+  }
+  ws.getCell('A7').font = { bold: true };
+  ws.getCell('B7').font = { bold: true };
+
+  ws.mergeCells('A10:B10');
+  const searchHeader = ws.getCell('A10');
+  searchHeader.value = 'Master Script Search';
+  searchHeader.font = { size: 12, bold: true, color: { argb: 'FFFFFFFF' } };
+  searchHeader.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1E3A5F' } };
+  searchHeader.alignment = { horizontal: 'center' };
+
+  const firstScript = state.transactions.length > 0 ? state.transactions[0].script.toUpperCase() : 'RELIANCE';
+  ws.addRow(['Enter Script Name:', firstScript]);
+  const inputCell = ws.getCell('B11');
+  inputCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFFFC4' } };
+  inputCell.font = { bold: true };
+  inputCell.alignment = { horizontal: 'center' };
+  inputCell.border = {
+    top: { style: 'thick' }, left: { style: 'thick' }, bottom: { style: 'thick' }, right: { style: 'thick' }
+  };
+
+  ws.addRow(['Invested Capital', '']);
+  ws.addRow(['Current Invested Value', '']);
+  ws.addRow(['Realised Net P&L', '']);
+  ws.addRow(['Dividends Received', '']);
+  ws.addRow(['Net Profit for Script', '']);
+
+  for (let r = 12; r <= 16; r++) {
+    ws.getCell(`B${r}`).numFmt = '₹#,##0.00';
+  }
+  ws.getCell('A16').font = { bold: true };
+  ws.getCell('B16').font = { bold: true };
+
+  ws.addRow([]); ws.addRow([]); ws.addRow([]); ws.addRow([]); ws.addRow([]); // Blank spacing to row 21
+
+  let currentRow = 22;
+  const ranges: Record<string, { start: number; end: number; headers: string[] }> = {};
+
+  const appendSection = <T extends Record<string, any>>(
+    sectionName: string,
+    headers: string[],
+    data: T[],
+    preProcessRow: (row: T, idx: number) => any[]
+  ) => {
+    ws.mergeCells(`A${currentRow}:V${currentRow}`);
+    const titleCell = ws.getCell(`A${currentRow}`);
+    titleCell.value = sectionName;
+    titleCell.font = { size: 14, bold: true, color: { argb: 'FFFFFFFF' } };
+    titleCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF166534' } };
+    titleCell.alignment = { vertical: 'middle' };
+    ws.getRow(currentRow).height = 24;
+    currentRow++;
+
+    const spacerRow = ws.addRow([]);
+    spacerRow.height = 6;
+    spacerRow.eachCell(c => c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF1F5F9' } });
+    currentRow++;
+
+    const headerRow = ws.addRow(headers);
+    headerRow.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+    headerRow.height = 20;
+    headerRow.eachCell(c => c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF374151' } });
+
+    const startDataRow = currentRow + 1;
+    currentRow++;
+
+    if (data.length === 0) {
+      const noDataRow = ws.addRow(['No data']);
+      noDataRow.eachCell(c => c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFFFFF' } });
+      currentRow++;
+    } else {
+      data.forEach((item, idx) => {
+        const values = preProcessRow(item, idx);
+        const dataRow = ws.addRow(values);
+        dataRow.height = 20;
+        const rowBg = idx % 2 === 0 ? 'FFF8FAFC' : 'FFFFFFFF';
+        dataRow.eachCell((c, colNum) => {
+          c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: rowBg } };
+          c.alignment = { vertical: 'middle' };
+          const head = headers[colNum - 1];
+          if (head && (head.toLowerCase().includes('price') || head.toLowerCase().includes('cost') || head.toLowerCase().includes('pnl') || head.toLowerCase().includes('proceeds') || head.toLowerCase().includes('amount') || head.toLowerCase().includes('tds') || head.toLowerCase().includes('charges') || head.toLowerCase().includes('grossvalue') || head.toLowerCase().includes('brokerage') || head.toLowerCase().includes('stt') || head.toLowerCase().includes('sebi') || head.toLowerCase().includes('stamp') || head.toLowerCase().includes('dpcharges') || head.toLowerCase().includes('gst'))) {
+            if (typeof c.value === 'number') {
+              c.numFmt = '₹#,##0.00';
+            }
+          }
+          if (head && (head.toLowerCase().includes('qty') || head.toLowerCase().includes('quantity') || head.toLowerCase().includes('days'))) {
+            if (typeof c.value === 'number') {
+              c.numFmt = '#,##0';
+            }
+          }
+        });
+        currentRow++;
+      });
+    }
+
+    const endDataRow = currentRow - 1;
+
+    // TOTAL row
+    const totalRowVal = Array(headers.length).fill('');
+    totalRowVal[0] = 'TOTAL';
+    const totalRow = ws.addRow(totalRowVal);
+    totalRow.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+    totalRow.height = 22;
+    totalRow.eachCell(c => c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1F2937' } });
+
+    const sumCols = ['quantity', 'originalQty', 'remainingQty', 'qty', 'totalCost', 'buyCost', 'sellProceeds', 'grossPnL', 'netPnL', 'totalAmount', 'tds', 'netDividend'];
+    headers.forEach((h, cIdx) => {
+      const colLetter = getColLetter(cIdx);
+      if (sumCols.includes(h) && data.length > 0) {
+        totalRow.getCell(cIdx + 1).value = { formula: `=IFERROR(SUM(${colLetter}${startDataRow}:${colLetter}${endDataRow}), 0)` };
+      }
+    });
+    currentRow++;
+
+    ranges[sectionName] = {
+      start: startDataRow,
+      end: endDataRow,
+      headers
+    };
+
+    ws.addRow([]); ws.addRow([]); ws.addRow([]);
+    currentRow += 3;
+  };
+
+  // Stack Sections
+  appendSection<Transaction>(
+    'Transactions',
+    ['id', 'date', 'script', 'exchange', 'portfolio', 'type', 'tradeType', 'quantity', 'price', 'grossValue', 'brokerage', 'stt', 'exchangeCharges', 'sebiCharges', 'stampDuty', 'dpCharges', 'gst', 'totalCost', 'brokerName', 'orderId', 'importSource', 'notes'],
+    state.transactions,
+    (t) => [t.id, toExcelDateDisplay(t.date), t.script.toUpperCase(), t.exchange, t.portfolio, t.type, t.tradeType || 'DELIVERY', t.type === 'SELL' ? -Math.abs(t.quantity) : t.quantity, t.price, t.grossValue !== undefined ? t.grossValue : (t.quantity * t.price), t.brokerage, t.stt, t.exchangeCharges || 0, t.sebiCharges || 0, t.stampDuty || 0, t.dpCharges, t.gst, t.totalCost, t.brokerName || '', t.orderId || '', t.importSource || 'EXCEL', t.notes]
+  );
+
+  appendSection<Lot>(
+    'Lots',
+    ['id', 'buyTransactionId', 'script', 'exchange', 'portfolio', 'buyDate', 'buyPrice', 'avgBuyPrice', 'originalQty', 'remainingQty', 'totalCost', 'targetPrice', 'stopLossPrice', 'isin', 'sector', 'currentPrice', 'notes'],
+    state.lots,
+    (l) => [l.id, l.buyTransactionId, l.script.toUpperCase(), l.exchange, l.portfolio, toExcelDateDisplay(l.buyDate), l.buyPrice, l.avgBuyPrice !== undefined ? l.avgBuyPrice : l.buyPrice, l.originalQty, l.remainingQty, l.totalCost, l.targetPrice !== undefined ? l.targetPrice : '', l.stopLossPrice !== undefined ? l.stopLossPrice : '', l.isin || '', l.sector || '', l.currentPrice !== undefined ? l.currentPrice : '', l.notes]
+  );
+
+  appendSection<ClosedTrade>(
+    'ClosedTrades',
+    ['id', 'sellTransactionId', 'buyLotId', 'script', 'exchange', 'portfolio', 'buyDate', 'sellDate', 'buyPrice', 'sellPrice', 'qty', 'buyCost', 'buyCharges', 'sellProceeds', 'sellCharges', 'grossPnL', 'netPnL', 'capitalGainType', 'taxableGain', 'holdingDays', 'isLTCG'],
+    state.closedTrades,
+    (ct) => [ct.id, ct.sellTransactionId, ct.buyLotId, ct.script.toUpperCase(), ct.exchange, ct.portfolio, toExcelDateDisplay(ct.buyDate), toExcelDateDisplay(ct.sellDate), ct.buyPrice, ct.sellPrice, ct.qty, ct.buyCost, ct.buyCharges || 0, ct.sellProceeds, ct.sellCharges || 0, ct.grossPnL, ct.netPnL, ct.capitalGainType || (ct.isLTCG ? 'LTCG' : 'STCG'), ct.taxableGain !== undefined ? ct.taxableGain : '', ct.holdingDays, ct.isLTCG ? 'LTCG' : 'STCG']
+  );
+
+  appendSection<Dividend>(
+    'Dividends',
+    ['id', 'date', 'recordDate', 'exDividendDate', 'script', 'portfolio', 'dividendType', 'qty', 'dividendPerShare', 'totalAmount', 'tds', 'netDividend', 'notes'],
+    state.dividends,
+    (d) => [d.id, toExcelDateDisplay(d.date), d.recordDate ? toExcelDateDisplay(d.recordDate) : '', d.exDividendDate ? toExcelDateDisplay(d.exDividendDate) : '', d.script.toUpperCase(), d.portfolio || 'Default', d.dividendType || 'FINAL', d.qty, d.dividendPerShare, d.totalAmount, d.tds || 0, d.netDividend !== undefined ? d.netDividend : (d.totalAmount - (d.tds || 0)), d.notes || '']
+  );
+
+  appendSection<CorporateAction>(
+    'CorporateActions',
+    ['id', 'date', 'script', 'type', 'ratio', 'parentSymbol', 'childSymbol', 'parentCostPercent', 'childCostPercent', 'issuePrice', 'applied', 'notes'],
+    state.corporateActions,
+    (ca) => [ca.id, toExcelDateDisplay(ca.date), ca.script.toUpperCase(), ca.type, ca.ratio || '', ca.parentSymbol || '', ca.childSymbol || '', ca.parentCostPercent !== undefined ? ca.parentCostPercent : '', ca.childCostPercent !== undefined ? ca.childCostPercent : '', ca.issuePrice !== undefined ? ca.issuePrice : '', ca.applied ? 'Applied' : 'Pending', ca.notes]
+  );
+
+  if (options.includeWatchlist) {
+    appendSection<WatchlistEntry>(
+      'Watchlist',
+      ['id', 'script', 'exchange', 'targetPrice', 'stopLossPrice', 'alertType', 'addedDate', 'sector', 'notes'],
+      state.watchlist || [],
+      (w) => [w.id, w.script.toUpperCase(), w.exchange || 'NSE', w.targetPrice !== null && w.targetPrice !== undefined ? w.targetPrice : '', w.stopLossPrice !== undefined ? w.stopLossPrice : '', w.alertType || 'NONE', w.addedDate ? toExcelDateDisplay(w.addedDate) : '', w.sector || '', w.notes || '']
+    );
+  }
+
+  // Settings stack
+  ws.mergeCells(`A${currentRow}:B${currentRow}`);
+  const settingsTitle = ws.getCell(`A${currentRow}`);
+  settingsTitle.value = 'Settings';
+  settingsTitle.font = { size: 14, bold: true, color: { argb: 'FFFFFFFF' } };
+  settingsTitle.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF166534' } };
+  currentRow++;
+
+  ws.addRow(['Key', 'Value']);
+  ws.getRow(currentRow).font = { bold: true };
+  currentRow++;
+
+  Object.entries(state.settings).forEach(([key, val]) => {
+    ws.addRow([key, typeof val === 'object' ? JSON.stringify(val) : val]);
+    currentRow++;
+  });
+
+  const getCRng = (sectionName: string, headerName: string): string => {
+    const r = ranges[sectionName];
+    if (!r) return '$A$1:$A$1';
+    const colLetter = getColLetter(r.headers.indexOf(headerName));
+    return `AllData!$${colLetter}$${r.start}:$${colLetter}$${r.end}`;
+  };
+
+  // Retroactively write dashboard formulas with IFERROR wrappers
+  ws.getCell('B3').value = { formula: `=IFERROR(SUMIF(${getCRng('Transactions', 'type')},"BUY",${getCRng('Transactions', 'totalCost')}), 0)` };
+  ws.getCell('B4').value = { formula: `=IFERROR(SUMIF(${getCRng('Lots', 'remainingQty')},">"&0,${getCRng('Lots', 'totalCost')}), 0)` };
+  ws.getCell('B5').value = { formula: `=IFERROR(SUMIF(${getCRng('ClosedTrades', 'id')},"<>"&"",${getCRng('ClosedTrades', 'netPnL')}), 0)` };
+  ws.getCell('B6').value = { formula: `=IFERROR(SUM(${getCRng('Dividends', 'netDividend')}), 0)` };
+  ws.getCell('B7').value = { formula: `=IFERROR(B5+B6, 0)` };
+
+  ws.getCell('B12').value = { formula: `=IFERROR(SUMIFS(${getCRng('Transactions', 'totalCost')},${getCRng('Transactions', 'script')},B11,${getCRng('Transactions', 'type')},"BUY"), 0)` };
+  ws.getCell('B13').value = { formula: `=IFERROR(SUMIFS(${getCRng('Lots', 'totalCost')},${getCRng('Lots', 'script')},B11), 0)` };
+  ws.getCell('B14').value = { formula: `=IFERROR(SUMIFS(${getCRng('ClosedTrades', 'netPnL')},${getCRng('ClosedTrades', 'script')},B11), 0)` };
+  ws.getCell('B15').value = { formula: `=IFERROR(SUMIFS(${getCRng('Dividends', 'netDividend')},${getCRng('Dividends', 'script')},B11), 0)` };
+  ws.getCell('B16').value = { formula: `=IFERROR(B14+B15, 0)` };
+
+  ws.getColumn(1).width = 30;
+  ws.getColumn(2).width = 20;
+  ws.getColumn(3).width = 16;
+  ws.getColumn(7).width = 14;
+  ws.getColumn(8).width = 14;
 };
 
 // -------------------------------------------------------------
@@ -618,13 +1096,13 @@ export const exportTaxReport = async (state: AppState, fyYear: string): Promise<
   const fyClosedTrades = closedTrades.filter(ct => inFY(ct.sellDate));
   const fyDividends = dividends.filter(d => inFY(d.date));
 
-  const fySTCGTrades = fyClosedTrades.filter(ct => !ct.isLTCG);
-  const fyLTCGTrades = fyClosedTrades.filter(ct => ct.isLTCG);
+  const fySTCGTrades = fyClosedTrades.filter(ct => ct.capitalGainType === 'STCG' || (!ct.capitalGainType && !ct.isLTCG));
+  const fyLTCGTrades = fyClosedTrades.filter(ct => ct.capitalGainType === 'LTCG' || (!ct.capitalGainType && ct.isLTCG));
 
   const totalSTCG = fySTCGTrades.reduce((acc, t) => acc + t.netPnL, 0);
   const totalLTCG = fyLTCGTrades.reduce((acc, t) => acc + t.netPnL, 0);
   const totalDiv = fyDividends.reduce((acc, d) => acc + d.totalAmount, 0);
-  const totalTDS = fyDividends.reduce((acc, d) => acc + d.tds, 0);
+  const totalTDS = fyDividends.reduce((acc, d) => acc + (d.tds || 0), 0);
 
   // SHEET 1: Tax Summary
   const summaryWs = wb.addWorksheet('Tax Summary');
@@ -704,13 +1182,13 @@ export const exportTaxReport = async (state: AppState, fyYear: string): Promise<
   const taxLiabCell = summaryWs.getCell('B19');
   taxLiabCell.numFmt = '₹#,##0.00';
   taxLiabCell.font = { size: 12, bold: true, color: { argb: 'FFB91C1C' } };
-  summaryWs.getRow(19).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFEE2E2' } }; // Prominent red-100 fill
+  summaryWs.getRow(19).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFEE2E2' } };
 
   summaryWs.getColumn(1).width = 38;
   summaryWs.getColumn(2).width = 25;
   applyPageSetup(summaryWs);
 
-  // SHEET BUILDER HELPER
+  // SHEET BUILDER HELPER FOR FY REPORTS
   const addTaxSheet = <T extends Record<string, any>>(
     sheetName: string,
     headers: string[],
@@ -722,7 +1200,6 @@ export const exportTaxReport = async (state: AppState, fyYear: string): Promise<
     ws.views = [{ state: 'frozen', ySplit: 1, showGridLines: true }];
     ws.properties.tabColor = { argb: tabColorHex };
 
-    // Header
     const headerRow = ws.addRow(headers);
     headerRow.font = { bold: true, color: { argb: 'FFFFFFFF' } };
     headerRow.height = 24;
@@ -731,7 +1208,6 @@ export const exportTaxReport = async (state: AppState, fyYear: string): Promise<
       c.alignment = { vertical: 'middle' };
     });
 
-    // Data
     if (data.length === 0) {
       ws.addRow(['No data matching filters for this financial year.']);
     } else {
@@ -745,13 +1221,16 @@ export const exportTaxReport = async (state: AppState, fyYear: string): Promise<
           c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: rowBg } };
           c.alignment = { vertical: 'middle' };
 
-          // Format numbers
           const header = headers[colNum - 1];
-          if (header && (header.toLowerCase().includes('price') || header.toLowerCase().includes('cost') || header.toLowerCase().includes('proceeds') || header.toLowerCase().includes('pnl') || header.toLowerCase().includes('amount') || header.toLowerCase().includes('tds') || header.toLowerCase().includes('tax'))) {
-            c.numFmt = '₹#,##0.00';
+          if (header && (header.toLowerCase().includes('price') || header.toLowerCase().includes('cost') || header.toLowerCase().includes('proceeds') || header.toLowerCase().includes('pnl') || header.toLowerCase().includes('amount') || header.toLowerCase().includes('tds') || header.toLowerCase().includes('tax') || header.toLowerCase().includes('exempt') || header.toLowerCase().includes('cumulative'))) {
+            if (typeof c.value === 'number') {
+              c.numFmt = '₹#,##0.00';
+            }
           }
-          if (header && header.toLowerCase().includes('date')) {
-            c.value = formatExcelDate(c.value as string);
+          if (header && header.toLowerCase().includes('qty')) {
+            if (typeof c.value === 'number') {
+              c.numFmt = '#,##0';
+            }
           }
         });
       });
@@ -791,8 +1270,8 @@ export const exportTaxReport = async (state: AppState, fyYear: string): Promise<
       ct.script,
       ct.exchange,
       ct.portfolio,
-      ct.buyDate,
-      ct.sellDate,
+      toExcelDateDisplay(ct.buyDate),
+      toExcelDateDisplay(ct.sellDate),
       ct.qty,
       ct.buyPrice,
       ct.sellPrice,
@@ -800,12 +1279,11 @@ export const exportTaxReport = async (state: AppState, fyYear: string): Promise<
       ct.sellProceeds,
       ct.grossPnL,
       ct.netPnL,
-      Math.max(0, ct.netPnL) * 0.20 // calculated tax column
+      Math.max(0, ct.netPnL) * 0.20
     ]
   );
 
   // Sheet 3: LTCG Trades
-  // Note: Renders cumulative LTCG to track threshold limits
   let cumulativeLTCG = 0;
   const processedLTCG = fyLTCGTrades.map((ct) => {
     cumulativeLTCG += ct.netPnL;
@@ -827,8 +1305,8 @@ export const exportTaxReport = async (state: AppState, fyYear: string): Promise<
       ct.script,
       ct.exchange,
       ct.portfolio,
-      ct.buyDate,
-      ct.sellDate,
+      toExcelDateDisplay(ct.buyDate),
+      toExcelDateDisplay(ct.sellDate),
       ct.qty,
       ct.buyPrice,
       ct.sellPrice,
@@ -841,18 +1319,18 @@ export const exportTaxReport = async (state: AppState, fyYear: string): Promise<
     ]
   );
 
-  // Custom conditional formatting rule for LTCG Cumulative
+  // Custom conditional formatting for LTCG Cumulative warnings
   const ltcgWs = wb.getWorksheet('LTCG Trades');
   if (ltcgWs && fyLTCGTrades.length > 0) {
     for (let r = 2; r <= fyLTCGTrades.length + 1; r++) {
       const cumCell = ltcgWs.getCell(`N${r}`);
       const cumVal = cumCell.value as number;
       if (cumVal >= 100000 && cumVal < 125000) {
-        cumCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFEF3C7' } }; // yellow warning warning
+        cumCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFEF3C7' } };
       } else if (cumVal >= 125000) {
-        cumCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFEE2E2' } }; // red taxable fill
+        cumCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFEE2E2' } };
       } else {
-        cumCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF0FDF4' } }; // green exempt fill
+        cumCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF0FDF4' } };
       }
     }
   }
@@ -865,20 +1343,18 @@ export const exportTaxReport = async (state: AppState, fyYear: string): Promise<
     'FF7E22CE',
     (d) => [
       d.id,
-      d.date,
+      d.recordDate ? toExcelDateDisplay(d.recordDate) : toExcelDateDisplay(d.date),
       d.script,
       d.qty,
       d.dividendPerShare,
       d.totalAmount,
-      d.tds,
-      d.totalAmount - d.tds
+      d.tds || 0,
+      d.totalAmount - (d.tds || 0)
     ]
   );
 
-  // Trigger Download
   const buffer = await wb.xlsx.writeBuffer();
   const fileType = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
   const blob = new Blob([buffer], { type: fileType });
   saveAs(blob, `LotLedger_TaxReport_FY_${fyYear}_${new Date().toISOString().split('T')[0]}.xlsx`);
 };
-

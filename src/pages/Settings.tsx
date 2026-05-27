@@ -36,6 +36,9 @@ export const Settings: React.FC = () => {
   // Excel export settings
   const [exportFormat, setExportFormat] = useState<'multi-tab' | 'single-sheet'>('multi-tab');
   const [exportGrouping, setExportGrouping] = useState<'chronological' | 'scriptwise'>('chronological');
+  const [includePerScriptSheets, setIncludePerScriptSheets] = useState(true);
+  const [includeTaxAnalysis, setIncludeTaxAnalysis] = useState(true);
+  const [importWarnings, setImportWarnings] = useState<string[]>([]);
 
   // Master CSV state
   const [isCsvUploading, setIsCsvUploading] = useState(false);
@@ -312,7 +315,12 @@ export const Settings: React.FC = () => {
   const handleExport = async () => {
     try {
       showToast('Compiling Excel workbook...', 'info');
-      await exportToExcel(state, exportFormat, exportGrouping);
+      await exportToExcel(state, {
+        format: exportFormat,
+        includePerScriptSheets,
+        includeWatchlist: true,
+        includeTaxAnalysis
+      });
       showToast('Portfolio backup file downloaded successfully!', 'success');
     } catch (e) {
       showToast('Spreadsheet creation failed.', 'error');
@@ -332,7 +340,8 @@ export const Settings: React.FC = () => {
       return;
     }
 
-    const { state: importedState, summary, profileMeta } = result;
+    const { state: importedState, summary, profileMeta, warnings } = result;
+    setImportWarnings(warnings || []);
 
     // Check for _ProfileMeta confirmation dialog (Section 17.14)
     if (profileMeta && importedState) {
@@ -935,6 +944,30 @@ export const Settings: React.FC = () => {
             </div>
           </div>
 
+          {exportFormat === 'multi-tab' && (
+            <div className="space-y-2.5 pt-1 text-xs select-none">
+              <label className="flex items-center space-x-2 text-financial-muted hover:text-white cursor-pointer transition-colors">
+                <input
+                  type="checkbox"
+                  checked={includePerScriptSheets}
+                  onChange={e => setIncludePerScriptSheets(e.target.checked)}
+                  className="rounded border-financial-border text-financial-green focus:ring-0 focus:ring-offset-0 bg-financial-bg cursor-pointer"
+                />
+                <span>Include per-script sheets (one tab per stock)</span>
+              </label>
+
+              <label className="flex items-center space-x-2 text-financial-muted hover:text-white cursor-pointer transition-colors">
+                <input
+                  type="checkbox"
+                  checked={includeTaxAnalysis}
+                  onChange={e => setIncludeTaxAnalysis(e.target.checked)}
+                  className="rounded border-financial-border text-financial-green focus:ring-0 focus:ring-offset-0 bg-financial-bg cursor-pointer"
+                />
+                <span>Include financial year tax analysis sheet</span>
+              </label>
+            </div>
+          )}
+
           <div className="flex justify-between items-center space-x-4 border-t border-financial-border/40 pt-4 mt-2 select-none">
             <input
               type="file"
@@ -959,6 +992,17 @@ export const Settings: React.FC = () => {
               <span>Export Portfolio (.xlsx)</span>
             </button>
           </div>
+
+          {importWarnings.length > 0 && (
+            <div className="bg-amber-500/10 border border-amber-500/30 rounded-lg p-4 mt-3">
+              <p className="text-amber-400 font-semibold text-xs mb-2 flex items-center">
+                <span className="mr-1">⚠️</span> Import completed with {importWarnings.length} warning(s):
+              </p>
+              <ul className="text-xs text-amber-300/80 space-y-1 list-disc list-inside max-h-40 overflow-y-auto">
+                {importWarnings.map((w, i) => <li key={i}>{w}</li>)}
+              </ul>
+            </div>
+          )}
         </div>
 
       </div>

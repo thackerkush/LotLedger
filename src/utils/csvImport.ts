@@ -1,5 +1,7 @@
 import Papa from 'papaparse';
 import type { Transaction, Lot, ClosedTrade, Settings } from '../types';
+import { genBuyId, genSellId, genLotId, genCtId } from './idGenerator';
+import { normalizeToISODate } from './dateUtils';
 
 export interface CSVTradeRow {
   Date: string; // YYYY-MM-DD
@@ -12,7 +14,7 @@ export interface CSVTradeRow {
 
 export const processCSVImport = (
   file: File,
-  _settings: Settings, // Prefix with _ to mark as unused, or remove
+  _settings: Settings,
   portfolio: string,
   onComplete: (transactions: Transaction[], lots: Lot[], closedTrades: ClosedTrade[]) => void,
   onError: (error: string) => void
@@ -31,6 +33,12 @@ export const processCSVImport = (
       let currentLots: Lot[] = [];
       const closedTrades: ClosedTrade[] = [];
 
+      // Maintain active ID lists for collision-resistant sequence logic
+      const buyIds: string[] = [];
+      const sellIds: string[] = [];
+      const lotIds: string[] = [];
+      const ctIds: string[] = [];
+
       try {
         for (const row of rows) {
           if (!row.Script || !row.Type || !row.Quantity || !row.Price) {
@@ -40,70 +48,88 @@ export const processCSVImport = (
           const q = Number(row.Quantity);
           const p = Number(row.Price);
           const scriptUpper = String(row.Script).trim().toUpperCase();
-          const timestamp = `${Date.now()}_${Math.random().toString(36).substring(2, 9)}`; // Unique ID base
-          const txnId = `TXN_${timestamp}`;
+          const normalizedDate = normalizeToISODate(row.Date);
+          const brokerage = row.Brokerage || 0;
+          const grossValue = q * p;
 
           if (row.Type.toUpperCase() === 'BUY') {
-            const brokerage = row.Brokerage || 0;
-            const totalCost = (q * p) + brokerage;
+            const totalCost = grossValue + brokerage;
+            const txnId = genBuyId(scriptUpper, normalizedDate, buyIds);
+            buyIds.push(txnId);
 
             const txn: Transaction = {
               id: txnId,
-              date: row.Date,
+              date: normalizedDate,
               script: scriptUpper,
-              exchange: 'NSE', // default
+              exchange: 'NSE', // Default exchange NSE
               portfolio,
               type: 'BUY',
+              tradeType: 'DELIVERY',
               quantity: q,
               price: p,
+              grossValue,
               brokerage,
-              dpCharges: 0,
               stt: 0,
+              exchangeCharges: 0,
+              sebiCharges: 0,
+              stampDuty: 0,
+              dpCharges: 0,
               gst: 0,
               totalCost,
+              importSource: 'CSV',
               notes: 'CSV Import'
             };
             transactions.push(txn);
 
+            const lotId = genLotId(scriptUpper, normalizedDate, lotIds);
+            lotIds.push(lotId);
+
             const lot: Lot = {
-              id: `LOT_${timestamp}`,
+              id: lotId,
               buyTransactionId: txnId,
               script: scriptUpper,
               exchange: 'NSE',
               portfolio,
-              buyDate: row.Date,
+              buyDate: normalizedDate,
               buyPrice: p,
+              avgBuyPrice: totalCost / q, // stored, not formula
               originalQty: q,
               remainingQty: q,
               totalCost,
               notes: 'CSV Import'
             };
             currentLots.push(lot);
+
           } else if (row.Type.toUpperCase() === 'SELL') {
-            const brokerage = row.Brokerage || 0;
-            const netProceeds = (q * p) - brokerage;
+            const txnId = genSellId(scriptUpper, normalizedDate, sellIds);
+            sellIds.push(txnId);
 
             const txn: Transaction = {
               id: txnId,
-              date: row.Date,
+              date: normalizedDate,
               script: scriptUpper,
               exchange: 'NSE',
               portfolio,
               type: 'SELL',
+              tradeType: 'DELIVERY',
               quantity: q,
               price: p,
+              grossValue,
               brokerage,
-              dpCharges: 0,
               stt: 0,
+              exchangeCharges: 0,
+              sebiCharges: 0,
+              stampDuty: 0,
+              dpCharges: 0,
               gst: 0,
-              totalCost: netProceeds, // Note: totalCost for sell is usually grossValue, but let's stick to netProceeds
+              totalCost: grossValue, // totalCost on SELL is grossValue
+              importSource: 'CSV',
               notes: 'CSV Import'
             };
             transactions.push(txn);
 
             // FIFO allocation
             let remainingToSell = q;
-            // Get all lots for this script, sorted by buy date (FIFO)
             const scriptLots = currentLots.filter(l => l.script === scriptUpper && l.remainingQty > 0)
                                           .sort((a, b) => new Date(a.buyDate).getTime() - new Date(b.buyDate).getTime());
             
@@ -114,40 +140,50 @@ export const processCSVImport = (
               lot.remainingQty -= sellQty;
               remainingToSell -= sellQty;
 
-              const proportionalBuyCost = (lot.totalCost / lot.originalQty) * sellQty;
-              const proportionalSellProceeds = (netProceeds / q) * sellQty;
+              const proportionalBuyCost = lot.buyPrice * sellQty;
+              const proportionalBuyCharges = (lot.totalCost - (lot.buyPrice * lot.originalQty)) * (sellQty / lot.originalQty);
+              
+              const proportionalSellProceeds = p * sellQty;
+              const proportionalSellCharges = brokerage * (sellQty / q);
+
               const grossPnL = proportionalSellProceeds - proportionalBuyCost;
+              const netPnL = (proportionalSellProceeds - proportionalSellCharges) - (proportionalBuyCost + proportionalBuyCharges);
 
               const buyTime = new Date(lot.buyDate).getTime();
-              const sellTime = new Date(row.Date).getTime();
+              const sellTime = new Date(normalizedDate).getTime();
               const holdingDays = Math.max(0, Math.ceil((sellTime - buyTime) / (1000 * 60 * 60 * 24)));
               const isLTCG = holdingDays >= 365;
+              const capitalGainType = holdingDays === 0 ? 'INTRADAY' : isLTCG ? 'LTCG' : 'STCG';
+
+              const ctId = genCtId(scriptUpper, normalizedDate, ctIds);
+              ctIds.push(ctId);
 
               const ct: ClosedTrade = {
-                id: `CT_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`,
+                id: ctId,
                 sellTransactionId: txnId,
                 buyLotId: lot.id,
                 script: scriptUpper,
                 exchange: lot.exchange,
                 portfolio,
                 buyDate: lot.buyDate,
-                sellDate: row.Date,
+                sellDate: normalizedDate,
                 buyPrice: lot.buyPrice,
                 sellPrice: p,
                 qty: sellQty,
                 buyCost: proportionalBuyCost,
+                buyCharges: proportionalBuyCharges,
                 sellProceeds: proportionalSellProceeds,
+                sellCharges: proportionalSellCharges,
                 grossPnL,
-                netPnL: grossPnL, // Assuming taxes/charges handled via netProceeds
+                netPnL,
                 holdingDays,
+                capitalGainType,
                 isLTCG
               };
               closedTrades.push(ct);
             }
           }
         }
-
-        // Keep depleted lots to preserve historical references for closed trades
         
         onComplete(transactions, currentLots, closedTrades);
       } catch (err: any) {

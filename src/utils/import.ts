@@ -1,7 +1,8 @@
 /* eslint-disable @typescript-eslint/no-explicit-any, @typescript-eslint/no-unused-vars, no-useless-assignment, prefer-const, preserve-caught-error */
 import ExcelJS from 'exceljs';
-import type { AppState, Transaction, Lot, ClosedTrade, Dividend, CorporateAction, WatchlistEntry } from '../types';
+import type { AppState, Transaction, Lot, ClosedTrade, Dividend, CorporateAction, WatchlistEntry, Settings } from '../types';
 import { defaultSettings } from './storage';
+import { normalizeToISODate } from './dateUtils';
 
 export interface ImportSummary {
   transactions: number;
@@ -27,9 +28,10 @@ export interface ImportResult {
   errorDetail?: string;
   summary?: ImportSummary;
   profileMeta?: ProfileMeta;
+  warnings: string[];
 }
 
-// Extract exact cell value, handling formula, rich text, date, booleans, and ID strings (Section 17.3)
+// Extract exact cell value, handling formula, rich text, date, booleans, and ID strings
 const extractCellValue = (cell: ExcelJS.Cell, headerName: string): any => {
   let val = cell.value;
 
@@ -40,9 +42,9 @@ const extractCellValue = (cell: ExcelJS.Cell, headerName: string): any => {
     val = (cell as any).result ?? cell.result;
   }
 
-  // 2. Dates
-  if (val instanceof Date) {
-    return val.toISOString().split('T')[0];
+  // 2. Shared formulas unwrap
+  if (val && typeof val === 'object' && 'formula' in (val as any)) {
+    val = (val as any).result;
   }
 
   // 3. Rich Text unwrap
@@ -50,26 +52,42 @@ const extractCellValue = (cell: ExcelJS.Cell, headerName: string): any => {
     val = (val as any).richText.map((rt: any) => rt.text || '').join('');
   }
 
-  // 4. Shared formulas unwrap
-  if (val && typeof val === 'object' && 'formula' in (val as any)) {
-    val = (val as any).result;
+  // 4. Date normalisation
+  if (val instanceof Date) {
+    return normalizeToISODate(val);
+  }
+
+  // Detect date-like strings and normalise them too
+  if (typeof val === 'string') {
+    const s = val.trim();
+    if (/^\d{2}-[A-Za-z]{3}-\d{4}$/.test(s) ||
+        /^\d{4}-\d{2}-\d{2}(T.*)?$/.test(s) ||
+        /^\d{1,2}\/\d{1,2}\/\d{4}$/.test(s)) {
+      return normalizeToISODate(s);
+    }
   }
 
   // 5. Force string for ID fields to prevent number coercion corrupting UUIDs
-  const isIdField = headerName.toLowerCase().endsWith('id') || headerName === 'id';
+  const isIdField = headerName === 'id' || headerName.toLowerCase().endsWith('id');
   if (isIdField && val !== null && val !== undefined) {
     return String(val).trim();
   }
 
   // 6. Normalise booleans
-  const valStr = String(val).trim().toUpperCase();
-  if (valStr === 'TRUE' || val === true) return true;
-  if (valStr === 'FALSE' || val === false) return false;
+  if (typeof val === 'string') {
+    const upper = val.trim().toUpperCase();
+    if (upper === 'TRUE') return true;
+    if (upper === 'FALSE') return false;
+    if (upper === 'LTCG') return true;
+    if (upper === 'STCG') return false;
+    if (upper === 'APPLIED') return true;
+    if (upper === 'PENDING') return false;
+  }
 
   return val;
 };
 
-// Map row cells to header keys, restoring positive SELL quantity (Section 17.4)
+// Map row cells to header keys, restoring positive SELL quantity
 const extractRowData = (
   row: ExcelJS.Row,
   headers: string[],
@@ -98,20 +116,21 @@ const extractRowData = (
   return hasData ? rowData : null;
 };
 
-// Checks if row should be skipped from data list (Section 17.5)
+// Checks if row should be skipped from data list
 const shouldSkipRow = (firstCellText: string, sectionName: string): boolean => {
   const text = firstCellText.trim().toUpperCase();
-  if (text === '') return true; // spacer rows
-  if (text.includes('TOTAL')) return true; // subtotal or grand totals
-  if (text === 'NO DATA') return true; // placeholder row
-  if (text === sectionName.toUpperCase()) return true; // Section title row in single sheet
-  if (text.includes('PORTFOLIO SUMMARY')) return true; // Dashboard block
+  if (text === '') return true;
+  if (text.includes('TOTAL')) return true;
+  if (text === 'NO DATA') return true;
+  if (text === sectionName.toUpperCase()) return true;
+  if (text.includes('PORTFOLIO SUMMARY')) return true;
   if (text.includes('MASTER SCRIPT SEARCH')) return true;
   if (text.includes('ENTER SCRIPT NAME')) return true;
+  if (text.includes('SCRIPT LOOKUP')) return true;
   return false;
 };
 
-// Core Import Engine (Section 17.1)
+// Core Import Engine
 export const importFromExcel = async (file: File): Promise<ImportResult> => {
   try {
     const arrayBuffer = await file.arrayBuffer().catch(() => {
@@ -123,9 +142,11 @@ export const importFromExcel = async (file: File): Promise<ImportResult> => {
       throw new Error('ERR_XLSX_PARSE');
     });
 
+    const warnings: string[] = [];
+
     // 1. Profile metadata sheet read
     let profileMeta: ProfileMeta | undefined;
-    const metaWs = wb.getWorksheet('_ProfileMeta');
+    const metaWs = wb.getWorksheet('_Meta') || wb.getWorksheet('_ProfileMeta');
     if (metaWs) {
       const meta: any = {};
       metaWs.eachRow((row, rowNum) => {
@@ -146,36 +167,36 @@ export const importFromExcel = async (file: File): Promise<ImportResult> => {
             dataRowCounts: JSON.parse(meta.dataRowCounts || '{}')
           };
         } catch (e) {
-          console.warn('Failed parsing _ProfileMeta JSON values:', e);
+          warnings.push('Metadata was partially unreadable or corrupted.');
         }
       }
     }
 
-    // 2. Format detection (Section 17.2)
+    // 2. Format detection
     const allDataSheet = wb.getWorksheet('AllData');
-    let importedData: Partial<AppState> = {};
+    const isMultiTab = !!wb.getWorksheet('Transactions');
+    const isSingleSheet = !!allDataSheet;
 
-    if (allDataSheet) {
-      // SINGLE SHEET FORMAT
-      importedData = parseSingleSheet(allDataSheet);
-    } else {
-      // MULTI TAB FORMAT
-      const txSheet = wb.getWorksheet('Transactions');
-      if (!txSheet) {
-        throw new Error('ERR_UNKNOWN_FORMAT');
-      }
-      importedData = parseMultiTab(wb);
+    if (!isMultiTab && !isSingleSheet) {
+      throw new Error('ERR_UNKNOWN_FORMAT');
     }
 
-    // 3. Post-Parse Validation & Type Coercion (Section 17.8)
-    validateAndCoerce(importedData);
+    let importedData: Partial<AppState> = {};
 
-    // 4. Sanity Checks before returning (Section 17.9)
+    if (isSingleSheet) {
+      importedData = parseSingleSheet(allDataSheet!, warnings);
+    } else {
+      importedData = parseMultiTab(wb, warnings);
+    }
+
+    // 3. Post-Parse Validation & Type Coercion
+    validateAndCoerce(importedData, warnings);
+
+    // 4. Sanity Checks before returning
     if (!Array.isArray(importedData.transactions)) {
       throw new Error('ERR_INVALID_DATA_STRUCTURE');
     }
 
-    // Calculate summaries
     const summary: ImportSummary = {
       transactions: importedData.transactions.length,
       lots: importedData.lots?.length || 0,
@@ -189,7 +210,8 @@ export const importFromExcel = async (file: File): Promise<ImportResult> => {
       success: true,
       state: importedData,
       summary,
-      profileMeta
+      profileMeta,
+      warnings
     };
 
   } catch (err: any) {
@@ -199,7 +221,7 @@ export const importFromExcel = async (file: File): Promise<ImportResult> => {
 
     if (errorCode === 'ERR_FILE_READ') errorDetail = 'Could not read the file. It may be locked or corrupted.';
     if (errorCode === 'ERR_XLSX_PARSE') errorDetail = 'The file is not a valid Excel (.xlsx) file.';
-    if (errorCode === 'ERR_UNKNOWN_FORMAT') errorDetail = 'Unrecognised file format. Please use a file exported by this tool.';
+    if (errorCode === 'ERR_UNKNOWN_FORMAT') errorDetail = 'Unrecognised file format. Only LotLedger-exported .xlsx files are supported.';
     if (errorCode === 'ERR_INVALID_DATA_STRUCTURE') errorDetail = 'The file does not contain a valid Portfolio data structure.';
     if (errorCode.startsWith('ERR_ROW_PARSE_')) {
       const parts = errorCode.split('_');
@@ -209,13 +231,14 @@ export const importFromExcel = async (file: File): Promise<ImportResult> => {
     return {
       success: false,
       errorCode,
-      errorDetail
+      errorDetail,
+      warnings: []
     };
   }
 };
 
-// Parsing Single-Sheet Layout (Section 17.7)
-const parseSingleSheet = (sheet: ExcelJS.Worksheet): Partial<AppState> => {
+// Parsing Single-Sheet Layout
+const parseSingleSheet = (sheet: ExcelJS.Worksheet, warnings: string[]): Partial<AppState> => {
   const result: any = {
     transactions: [],
     lots: [],
@@ -239,15 +262,19 @@ const parseSingleSheet = (sheet: ExcelJS.Worksheet): Partial<AppState> => {
   let currentSection = '';
   let currentHeaders: string[] = []; // 1-indexed
   let headersRead = false;
+  let skipped = 0;
 
   sheet.eachRow((row, rowNumber) => {
     const firstCellText = String(row.getCell(1).value || '').trim();
 
-    // Detect section titles
     if (sectionMap[firstCellText] !== undefined) {
+      if (skipped > 0 && currentSection) {
+        warnings.push(`${currentSection}: ${skipped} empty rows were skipped.`);
+      }
       currentSection = firstCellText;
       currentHeaders = [];
       headersRead = false;
+      skipped = 0;
       return;
     }
 
@@ -255,45 +282,49 @@ const parseSingleSheet = (sheet: ExcelJS.Worksheet): Partial<AppState> => {
 
     if (shouldSkipRow(firstCellText, currentSection)) return;
 
-    // Header reader
     if (!headersRead) {
       row.eachCell({ includeEmpty: true }, (cell, colNumber) => {
         currentHeaders[colNumber] = String(cell.value || '').trim();
       });
       headersRead = true;
-      if (currentHeaders.length === 0 || !currentHeaders.some(h => h)) {
-        throw new Error(`ERR_MISSING_HEADERS_${currentSection}`);
-      }
       return;
     }
 
-    // Data extractor
     try {
       const rowData = extractRowData(row, currentHeaders, currentSection);
-      if (!rowData) return;
+      if (!rowData) {
+        skipped++;
+        return;
+      }
 
       const stateKey = sectionMap[currentSection];
       if (currentSection === 'Settings') {
-        if (rowData.Key && rowData.Value !== undefined && rowData.Value !== null) {
+        const k = rowData.key ?? rowData.Key;
+        const v = rowData.value ?? rowData.Value;
+        if (k && v !== undefined && v !== null) {
           try {
-            result.settings[rowData.Key] = JSON.parse(String(rowData.Value));
+            result.settings[k] = typeof v === 'string' ? JSON.parse(v) : v;
           } catch {
-            result.settings[rowData.Key] = rowData.Value;
+            result.settings[k] = v;
           }
         }
       } else {
         result[stateKey].push(rowData);
       }
     } catch (e) {
-      throw new Error(`ERR_ROW_PARSE_AllData_${rowNumber}`);
+      warnings.push(`Failed to parse row ${rowNumber} in section ${currentSection}.`);
     }
   });
+
+  if (skipped > 0 && currentSection) {
+    warnings.push(`${currentSection}: ${skipped} empty rows were skipped.`);
+  }
 
   return result;
 };
 
-// Parsing Multi-Tab Worksheets (Section 17.6)
-const parseMultiTab = (wb: ExcelJS.Workbook): Partial<AppState> => {
+// Parsing Multi-Tab Worksheets
+const parseMultiTab = (wb: ExcelJS.Workbook, warnings: string[]): Partial<AppState> => {
   const result: Partial<AppState> = {
     transactions: [],
     lots: [],
@@ -306,11 +337,15 @@ const parseMultiTab = (wb: ExcelJS.Workbook): Partial<AppState> => {
 
   const parseTabSheet = (sheetName: string): any[] => {
     const ws = wb.getWorksheet(sheetName);
-    if (!ws) return [];
+    if (!ws) {
+      warnings.push(`Sheet "${sheetName}" not found — ${sheetName} data will be empty.`);
+      return [];
+    }
 
     const headers: string[] = []; // 1-indexed
     const data: any[] = [];
     let headersParsed = false;
+    let skipped = 0;
 
     ws.eachRow((row, rowNumber) => {
       if (rowNumber === 1) {
@@ -318,9 +353,6 @@ const parseMultiTab = (wb: ExcelJS.Workbook): Partial<AppState> => {
           headers[colNumber] = String(cell.value || '').trim();
         });
         headersParsed = true;
-        if (headers.length === 0 || !headers.some(h => h)) {
-          throw new Error(`ERR_MISSING_HEADERS_${sheetName}`);
-        }
         return;
       }
       if (!headersParsed) return;
@@ -330,11 +362,19 @@ const parseMultiTab = (wb: ExcelJS.Workbook): Partial<AppState> => {
 
       try {
         const rowData = extractRowData(row, headers, sheetName);
-        if (rowData) data.push(rowData);
+        if (rowData) {
+          data.push(rowData);
+        } else {
+          skipped++;
+        }
       } catch (e) {
-        throw new Error(`ERR_ROW_PARSE_${sheetName}_${rowNumber}`);
+        warnings.push(`Failed to parse row ${rowNumber} in sheet ${sheetName}.`);
       }
     });
+
+    if (skipped > 0) {
+      warnings.push(`${sheetName}: ${skipped} empty rows were skipped.`);
+    }
 
     return data;
   };
@@ -344,125 +384,162 @@ const parseMultiTab = (wb: ExcelJS.Workbook): Partial<AppState> => {
   result.closedTrades = parseTabSheet('ClosedTrades') as ClosedTrade[];
   result.dividends = parseTabSheet('Dividends') as Dividend[];
   result.corporateActions = parseTabSheet('CorporateActions') as CorporateAction[];
-  
-  // Try loading settings
+  result.watchlist = parseTabSheet('Watchlist') as WatchlistEntry[];
+
   const settingsTab = parseTabSheet('Settings');
   const settings: any = {};
   settingsTab.forEach(row => {
-    if (row.Key && row.Value !== undefined && row.Value !== null) {
+    const k = row.key ?? row.Key;
+    const v = row.value ?? row.Value;
+    if (k && v !== undefined && v !== null) {
       try {
-        settings[row.Key] = JSON.parse(String(row.Value));
+        settings[k] = typeof v === 'string' ? JSON.parse(v) : v;
       } catch {
-        settings[row.Key] = row.Value;
+        settings[k] = v;
       }
     }
   });
   result.settings = settings;
 
-  // Watchlist is not exported as standard tabs in multi-tab (stored in state Settings usually), but we can handle it
-  const watchSheet = wb.getWorksheet('Watchlist');
-  if (watchSheet) {
-    result.watchlist = parseTabSheet('Watchlist') as WatchlistEntry[];
-  } else {
-    result.watchlist = [];
-  }
-
   return result;
 };
 
-// Post-Parse Coercion and type checking (Section 17.8)
-const validateAndCoerce = (state: Partial<AppState>): void => {
+// Post-Parse Coercion and type checking
+const validateAndCoerce = (state: Partial<AppState>, warnings: string[]): void => {
   // TRANSACTIONS
-  state.transactions = (state.transactions ?? []).map((t: any) => ({
-    id: String(t.id),
-    date: String(t.date || ''),
-    script: String(t.script || '').toUpperCase(),
-    exchange: String(t.exchange || 'NSE').toUpperCase() as 'NSE' | 'BSE',
-    portfolio: String(t.portfolio || 'Default'),
-    type: String(t.type || 'BUY').toUpperCase() as 'BUY' | 'SELL',
-    quantity: Math.abs(Number(t.quantity ?? 0)),
-    price: Number(t.price ?? 0),
-    brokerage: Number(t.brokerage ?? 0),
-    dpCharges: Number(t.dpCharges ?? 0),
-    stt: Number(t.stt ?? 0),
-    gst: Number(t.gst ?? 0),
-    totalCost: Number(t.totalCost ?? 0),
-    notes: String(t.notes || '')
-  }));
+  state.transactions = (state.transactions ?? []).map((t: any, idx: number) => {
+    const qty = Math.abs(Number(t.quantity ?? 0));
+    const price = Number(t.price ?? 0);
+    const date = normalizeToISODate(t.date);
+    if (!date) {
+      warnings.push(`Transactions: Row ${idx + 2} has an invalid date "${t.date}". Defaulting to empty.`);
+    }
+
+    return {
+      id:              String(t.id || `BUY-UNKNOWN-${idx}`),
+      date:            date,
+      script:          String(t.script || '').toUpperCase().trim(),
+      exchange:        (['NSE','BSE'].includes(String(t.exchange).toUpperCase()) ? String(t.exchange).toUpperCase() : 'NSE') as 'NSE'|'BSE',
+      portfolio:       String(t.portfolio || 'Default'),
+      type:            (['BUY','SELL'].includes(String(t.type).toUpperCase()) ? String(t.type).toUpperCase() : 'BUY') as 'BUY'|'SELL',
+      tradeType:       (['DELIVERY','INTRADAY'].includes(String(t.tradeType).toUpperCase()) ? String(t.tradeType).toUpperCase() : 'DELIVERY') as 'DELIVERY'|'INTRADAY',
+      quantity:        qty,
+      price:           price,
+      grossValue:      Number(t.grossValue ?? (qty * price)),
+      brokerage:       Number(t.brokerage ?? 0),
+      stt:             Number(t.stt ?? 0),
+      exchangeCharges: Number(t.exchangeCharges ?? 0),
+      sebiCharges:     Number(t.sebiCharges ?? 0),
+      stampDuty:       Number(t.stampDuty ?? 0),
+      dpCharges:       Number(t.dpCharges ?? 0),
+      gst:             Number(t.gst ?? 0),
+      totalCost:       Number(t.totalCost ?? 0),
+      brokerName:      t.brokerName ? String(t.brokerName) : undefined,
+      orderId:         t.orderId ? String(t.orderId) : undefined,
+      importSource:    (['MANUAL','CSV','EXCEL'].includes(String(t.importSource)) ? t.importSource : 'EXCEL') as 'MANUAL'|'CSV'|'EXCEL',
+      notes:           String(t.notes || ''),
+    };
+  });
 
   // LOTS
-  state.lots = (state.lots ?? []).map((l: any) => ({
-    id: String(l.id),
-    buyTransactionId: String(l.buyTransactionId),
-    script: String(l.script || '').toUpperCase(),
-    exchange: String(l.exchange || 'NSE').toUpperCase() as 'NSE' | 'BSE',
-    portfolio: String(l.portfolio || 'Default'),
-    buyDate: String(l.buyDate || ''),
-    buyPrice: Number(l.buyPrice ?? 0),
-    originalQty: Math.abs(Number(l.originalQty ?? 0)),
-    remainingQty: Math.abs(Number(l.remainingQty ?? 0)),
-    totalCost: Number(l.totalCost ?? 0),
-    currentPrice: l.currentPrice !== null && l.currentPrice !== undefined && l.currentPrice !== '' ? Number(l.currentPrice) : undefined,
-    notes: String(l.notes || '')
+  state.lots = (state.lots ?? []).map((l: any, idx: number) => ({
+    id:               String(l.id || `LOT-UNKNOWN-${idx}`),
+    buyTransactionId: String(l.buyTransactionId || ''),
+    script:           String(l.script || '').toUpperCase().trim(),
+    exchange:         (['NSE','BSE'].includes(String(l.exchange).toUpperCase()) ? String(l.exchange).toUpperCase() : 'NSE') as 'NSE'|'BSE',
+    portfolio:        String(l.portfolio || 'Default'),
+    buyDate:          normalizeToISODate(l.buyDate),
+    buyPrice:         Number(l.buyPrice ?? 0),
+    avgBuyPrice:      Number(l.avgBuyPrice ?? l.buyPrice ?? 0),
+    originalQty:      Math.abs(Number(l.originalQty ?? 0)),
+    remainingQty:     Math.abs(Number(l.remainingQty ?? 0)),
+    totalCost:        Number(l.totalCost ?? 0),
+    targetPrice:      l.targetPrice != null && l.targetPrice !== '' ? Number(l.targetPrice) : undefined,
+    stopLossPrice:    l.stopLossPrice != null && l.stopLossPrice !== '' ? Number(l.stopLossPrice) : undefined,
+    isin:             l.isin ? String(l.isin).trim() : undefined,
+    sector:           l.sector ? String(l.sector).trim() : undefined,
+    currentPrice:     l.currentPrice != null && l.currentPrice !== '' ? Number(l.currentPrice) : undefined,
+    notes:            String(l.notes || ''),
   }));
 
   // CLOSED TRADES
-  state.closedTrades = (state.closedTrades ?? []).map((ct: any) => ({
-    id: String(ct.id),
-    sellTransactionId: String(ct.sellTransactionId),
-    buyLotId: String(ct.buyLotId),
-    script: String(ct.script || '').toUpperCase(),
-    exchange: String(ct.exchange || 'NSE').toUpperCase() as 'NSE' | 'BSE',
-    portfolio: String(ct.portfolio || 'Default'),
-    buyDate: String(ct.buyDate || ''),
-    sellDate: String(ct.sellDate || ''),
-    buyPrice: Number(ct.buyPrice ?? 0),
-    sellPrice: Number(ct.sellPrice ?? 0),
-    qty: Math.abs(Number(ct.qty ?? 0)),
-    buyCost: Number(ct.buyCost ?? 0),
-    sellProceeds: Number(ct.sellProceeds ?? 0),
-    grossPnL: Number(ct.grossPnL ?? 0),
-    netPnL: Number(ct.netPnL ?? 0),
-    holdingDays: Number(ct.holdingDays ?? 0),
-    isLTCG: ct.isLTCG === true || String(ct.isLTCG).toUpperCase() === 'LTCG' || String(ct.isLTCG).toUpperCase() === 'TRUE'
-  }));
+  state.closedTrades = (state.closedTrades ?? []).map((ct: any, idx: number) => {
+    const capType = String(ct.capitalGainType || '').toUpperCase();
+    const isLTCGBool = capType === 'LTCG' || ct.isLTCG === true || String(ct.isLTCG).toUpperCase() === 'LTCG';
+    const finalCapType: 'STCG'|'LTCG'|'INTRADAY' =
+      capType === 'INTRADAY' ? 'INTRADAY' : isLTCGBool ? 'LTCG' : 'STCG';
+
+    return {
+      id:                   String(ct.id || `CT-UNKNOWN-${idx}`),
+      sellTransactionId:    String(ct.sellTransactionId || ''),
+      buyLotId:             String(ct.buyLotId || ''),
+      script:               String(ct.script || '').toUpperCase().trim(),
+      exchange:             (['NSE','BSE'].includes(String(ct.exchange).toUpperCase()) ? String(ct.exchange).toUpperCase() : 'NSE') as 'NSE'|'BSE',
+      portfolio:            String(ct.portfolio || 'Default'),
+      buyDate:              normalizeToISODate(ct.buyDate),
+      sellDate:             normalizeToISODate(ct.sellDate),
+      buyPrice:             Number(ct.buyPrice ?? 0),
+      sellPrice:            Number(ct.sellPrice ?? 0),
+      qty:                  Math.abs(Number(ct.qty ?? 0)),
+      buyCost:              Number(ct.buyCost ?? 0),
+      buyCharges:           Number(ct.buyCharges ?? 0),
+      sellProceeds:         Number(ct.sellProceeds ?? 0),
+      sellCharges:          Number(ct.sellCharges ?? 0),
+      grossPnL:             Number(ct.grossPnL ?? 0),
+      netPnL:               Number(ct.netPnL ?? 0),
+      holdingDays:          Number(ct.holdingDays ?? 0),
+      capitalGainType:      finalCapType,
+      isLTCG:               isLTCGBool,
+      taxableGain:          ct.taxableGain != null && ct.taxableGain !== '' ? Number(ct.taxableGain) : undefined,
+    };
+  });
 
   // DIVIDENDS
-  state.dividends = (state.dividends ?? []).map((d: any) => ({
-    id: String(d.id),
-    date: String(d.date || ''),
-    script: String(d.script || '').toUpperCase(),
-    qty: Number(d.qty ?? 0),
+  state.dividends = (state.dividends ?? []).map((d: any, idx: number) => ({
+    id:               String(d.id || `DIV-UNKNOWN-${idx}`),
+    date:             normalizeToISODate(d.date),
+    recordDate:       d.recordDate ? normalizeToISODate(d.recordDate) : undefined,
+    exDividendDate:   d.exDividendDate ? normalizeToISODate(d.exDividendDate) : undefined,
+    script:           String(d.script || '').toUpperCase().trim(),
+    portfolio:        String(d.portfolio || 'Default'),
+    dividendType:     (['INTERIM','FINAL','SPECIAL'].includes(String(d.dividendType)) ? d.dividendType : 'FINAL') as 'INTERIM'|'FINAL'|'SPECIAL',
     dividendPerShare: Number(d.dividendPerShare ?? 0),
-    totalAmount: Number(d.totalAmount ?? 0),
-    tds: Number(d.tds ?? 0)
+    qty:              Number(d.qty ?? 0),
+    totalAmount:      Number(d.totalAmount ?? 0),
+    tds:              Number(d.tds ?? 0),
+    netDividend:      Number(d.netDividend ?? (Number(d.totalAmount ?? 0) - Number(d.tds ?? 0))),
+    notes:            String(d.notes || ''),
   }));
 
   // CORPORATE ACTIONS
   state.corporateActions = (state.corporateActions ?? []).map((ca: any) => ({
-    id: String(ca.id),
-    date: String(ca.date || ''),
-    script: String(ca.script || '').toUpperCase(),
-    type: String(ca.type || 'SPLIT').toUpperCase() as 'SPLIT' | 'BONUS' | 'RIGHTS' | 'MERGER',
-    ratio: ca.ratio ? String(ca.ratio) : undefined,
-    parentSymbol: ca.parentSymbol ? String(ca.parentSymbol).toUpperCase() : undefined,
-    childSymbol: ca.childSymbol ? String(ca.childSymbol).toUpperCase() : undefined,
-    parentCostPercent: ca.parentCostPercent !== null && ca.parentCostPercent !== undefined ? Number(ca.parentCostPercent) : undefined,
-    childCostPercent: ca.childCostPercent !== null && ca.childCostPercent !== undefined ? Number(ca.childCostPercent) : undefined,
-    issuePrice: ca.issuePrice !== null && ca.issuePrice !== undefined ? Number(ca.issuePrice) : undefined,
-    applied: ca.applied === true || String(ca.applied).toUpperCase() === 'APPLIED' || String(ca.applied).toUpperCase() === 'TRUE',
-    notes: String(ca.notes || '')
+    id:                String(ca.id),
+    date:              normalizeToISODate(ca.date),
+    script:            String(ca.script || '').toUpperCase().trim(),
+    type:              String(ca.type || 'SPLIT').toUpperCase() as 'SPLIT'|'BONUS'|'RIGHTS'|'MERGER',
+    ratio:             ca.ratio ? String(ca.ratio) : undefined,
+    parentSymbol:      ca.parentSymbol ? String(ca.parentSymbol).toUpperCase() : undefined,
+    childSymbol:       ca.childSymbol ? String(ca.childSymbol).toUpperCase() : undefined,
+    parentCostPercent: ca.parentCostPercent != null && ca.parentCostPercent !== '' ? Number(ca.parentCostPercent) : undefined,
+    childCostPercent:  ca.childCostPercent != null && ca.childCostPercent !== '' ? Number(ca.childCostPercent) : undefined,
+    issuePrice:        ca.issuePrice != null && ca.issuePrice !== '' ? Number(ca.issuePrice) : undefined,
+    applied:           ca.applied === true || String(ca.applied).toUpperCase() === 'APPLIED' || String(ca.applied).toUpperCase() === 'TRUE',
+    notes:             String(ca.notes || ''),
   }));
 
   // WATCHLIST
   state.watchlist = (state.watchlist ?? []).map((w: any) => ({
-    id: String(w.id),
-    script: String(w.script || '').toUpperCase(),
-    targetPrice: w.targetPrice !== null && w.targetPrice !== undefined && w.targetPrice !== '' ? Number(w.targetPrice) : null,
-    notes: String(w.notes || '')
+    id:            String(w.id),
+    script:        String(w.script || '').toUpperCase().trim(),
+    exchange:      (['NSE','BSE'].includes(String(w.exchange).toUpperCase()) ? String(w.exchange).toUpperCase() : 'NSE') as 'NSE'|'BSE',
+    targetPrice:   w.targetPrice != null && w.targetPrice !== '' ? Number(w.targetPrice) : null,
+    stopLossPrice: w.stopLossPrice != null && w.stopLossPrice !== '' ? Number(w.stopLossPrice) : undefined,
+    alertType:     (['TARGET','STOP_LOSS','BOTH','NONE'].includes(String(w.alertType)) ? w.alertType : 'NONE') as 'TARGET'|'STOP_LOSS'|'BOTH'|'NONE',
+    addedDate:     w.addedDate ? normalizeToISODate(w.addedDate) : undefined,
+    sector:        w.sector ? String(w.sector).trim() : undefined,
+    notes:         String(w.notes || ''),
   }));
 
   // SETTINGS
-  state.settings = { ...defaultSettings, ...(state.settings ?? {}) } as any;
+  state.settings = { ...defaultSettings, ...(state.settings ?? {}) } as Settings;
 };
-
